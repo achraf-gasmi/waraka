@@ -43,6 +43,7 @@ class Transaction(BaseModel):
     intermediaries: list[Entity] = []
     description: Optional[str] = None
     red_flags: list[str] = []
+    no_prior_relationship: bool = False
 
 
 class STRDraftRequest(BaseModel):

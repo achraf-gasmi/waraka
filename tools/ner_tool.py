@@ -80,6 +80,7 @@ def parse_transaction(raw: dict, entities: list[Entity]) -> Optional[Transaction
             intermediaries=intermediaries,
             description=raw.get("description"),
             red_flags=raw.get("red_flags", []),
+            no_prior_relationship=bool(raw.get("no_prior_relationship", False)),
         )
     except Exception as exc:
         logger.error("transaction_parse_failed", error=str(exc))
@@ -124,6 +125,35 @@ def extract_entities_from_llm_response(
         red_flag_count=len(red_flags),
     )
 
+    return entities, transaction, red_flags
+
+
+def extract_entities_from_structured_response(
+    data: dict, case_id: str
+) -> tuple[list[Entity], Optional[Transaction], list[str]]:
+    """Parse the validated dict returned by call_llm_structured (tool_use).
+
+    Unlike extract_entities_from_llm_response, this receives an already-parsed
+    dict — no JSON decoding or fence-stripping needed.
+
+    Returns:
+        Tuple of (entities, transaction, initial_red_flags).
+    """
+    log = logger.bind(case_id=case_id)
+
+    raw_entities: list[dict] = data.get("entities", [])
+    raw_transaction: dict = data.get("transaction", {})
+    red_flags: list[str] = data.get("initial_red_flags", [])
+
+    entities = [parse_entity(e) for e in raw_entities if e.get("name")]
+    transaction = parse_transaction(raw_transaction, entities) if raw_transaction else None
+
+    log.info(
+        "structured_extraction_complete",
+        entity_count=len(entities),
+        has_transaction=transaction is not None,
+        red_flag_count=len(red_flags),
+    )
     return entities, transaction, red_flags
 
 

@@ -6,8 +6,7 @@ full integration test, and mocked LLM for unit tests.
 
 import json
 import pytest
-import uuid
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, AsyncMock
 
 from tests.conftest import (
     MOCK_ANALYST_INPUT,
@@ -15,18 +14,18 @@ from tests.conftest import (
     EXPECTED_RISK_INDICATORS_MIN,
     EXPECTED_ENTITY_COUNT,
     MOCK_SANCTIONS_RESPONSE_CLEAN,
-    MOCK_SANCTIONS_RESPONSE_HIT,
 )
 from graph.str_graph import run_str_graph, assess_risk_node, STRState
 from tools.goaml_tool import validate_str_xml
 from models.schemas import RiskLevel
+import uuid
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
-MOCK_ENTITY_EXTRACTION_JSON: str = json.dumps({
+MOCK_ENTITY_EXTRACTION_DATA: dict = {
     "entities": [
         {
             "name": "Immobiliere Carthage SARL",
@@ -64,22 +63,26 @@ MOCK_ENTITY_EXTRACTION_JSON: str = json.dumps({
             "name": "Immobiliere Carthage SARL",
             "entity_type": "company",
             "country": "TN",
+            "is_pep": False,
         },
         "receiver": {
             "name": "Gulf Properties FZE",
             "entity_type": "company",
             "country": "AE",
+            "is_pep": False,
         },
         "intermediaries": [
             {
                 "name": "Mediterranean Holdings Ltd",
                 "entity_type": "company",
                 "country": "MT",
+                "is_pep": False,
             },
             {
                 "name": "Atlantic Capital SA",
                 "entity_type": "company",
                 "country": "LU",
+                "is_pep": False,
             },
         ],
         "no_prior_relationship": True,
@@ -90,7 +93,7 @@ MOCK_ENTITY_EXTRACTION_JSON: str = json.dumps({
         "Recours a plusieurs intermediaires",
         "Absence de relation anterieure",
     ],
-})
+}
 
 MOCK_NARRATIVE: str = (
     "La societe Immobiliere Carthage SARL a effectue le 15 mars 2026 "
@@ -111,7 +114,7 @@ def _make_request_dict(analyst_input: str = MOCK_ANALYST_INPUT) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Unit tests -- assess_risk_node (no LLM needed)
+# Unit tests -- assess_risk_node (sync, no LLM needed)
 # ---------------------------------------------------------------------------
 
 class TestAssessRiskNode:
@@ -183,80 +186,70 @@ class TestAssessRiskNode:
 
 
 # ---------------------------------------------------------------------------
-# Integration test -- full pipeline with mocked LLM and sanctions
+# Integration tests -- full pipeline with mocked LLM and sanctions
 # ---------------------------------------------------------------------------
 
 class TestFullPipelineMocked:
-    def test_full_pipeline_mocked_llm(self):
+    async def test_full_pipeline_mocked_llm(self):
         """Run the full 5-node graph with mocked LLM and sanctions."""
-
-        def fake_call_llm(system, user, case_id):
-            if "extraire" in system.lower() or "extraction" in user.lower() or "analyste" in user.lower():
-                return MOCK_ENTITY_EXTRACTION_JSON
-            return MOCK_NARRATIVE
-
         with (
-            patch("graph.str_graph.call_llm", side_effect=fake_call_llm),
-            patch("graph.str_graph.screen_entities", return_value=MOCK_SANCTIONS_RESPONSE_CLEAN),
+            patch("graph.str_graph.call_llm_structured", return_value=MOCK_ENTITY_EXTRACTION_DATA),
+            patch("graph.str_graph.call_llm", return_value=MOCK_NARRATIVE),
+            patch(
+                "graph.str_graph.screen_entities_async",
+                new=AsyncMock(return_value=MOCK_SANCTIONS_RESPONSE_CLEAN),
+            ),
         ):
-            final_state = run_str_graph(_make_request_dict())
+            final_state = await run_str_graph(_make_request_dict())
 
-        # Risk assertions
         assert final_state["risk_level"] == EXPECTED_RISK_LEVEL
         assert len(final_state["risk_indicators"]) >= EXPECTED_RISK_INDICATORS_MIN
-
-        # Entity assertions
         assert len(final_state["extracted_entities"]) >= EXPECTED_ENTITY_COUNT
 
-        # XML assertions
         xml = final_state["goaml_xml"]
         assert xml.startswith('<?xml version="1.0" encoding="UTF-8"?>')
         is_valid, errors = validate_str_xml(xml)
         assert is_valid, f"goAML XML validation failed: {errors}"
 
-        # Narrative
         assert len(final_state["narrative_fr"]) > 50
-
-        # No fatal errors
         assert not final_state.get("errors")
 
-    def test_full_pipeline_with_sanctions_hit(self):
+    async def test_full_pipeline_with_sanctions_hit(self):
         """Pipeline correctly flags sanctions hit."""
-
-        def fake_call_llm(system, user, case_id):
-            if "analyste" in user.lower():
-                return MOCK_ENTITY_EXTRACTION_JSON
-            return MOCK_NARRATIVE
-
         hit_sanctions = {
             "Immobiliere Carthage SARL": {"hit": False, "detail": None},
-            "Gulf Properties FZE": {
-                "hit": True,
-                "detail": "Listed on OFAC SDN list",
-            },
+            "Gulf Properties FZE": {"hit": True, "detail": "Listed on OFAC SDN list"},
             "Mediterranean Holdings Ltd": {"hit": False, "detail": None},
             "Atlantic Capital SA": {"hit": False, "detail": None},
         }
 
         with (
-            patch("graph.str_graph.call_llm", side_effect=fake_call_llm),
-            patch("graph.str_graph.screen_entities", return_value=hit_sanctions),
+            patch("graph.str_graph.call_llm_structured", return_value=MOCK_ENTITY_EXTRACTION_DATA),
+            patch("graph.str_graph.call_llm", return_value=MOCK_NARRATIVE),
+            patch(
+                "graph.str_graph.screen_entities_async",
+                new=AsyncMock(return_value=hit_sanctions),
+            ),
         ):
-            final_state = run_str_graph(_make_request_dict())
+            final_state = await run_str_graph(_make_request_dict())
 
         assert "SANCTIONS HIT: Gulf Properties FZE" in final_state.get("analyst_notes", [])
         assert final_state["confidence"] >= 0.85
 
-    def test_llm_failure_does_not_crash_pipeline(self):
+    async def test_llm_failure_does_not_crash_pipeline(self):
         """If LLM returns None, pipeline completes with error notes."""
         with (
+            patch("graph.str_graph.call_llm_structured", return_value=None),
             patch("graph.str_graph.call_llm", return_value=None),
-            patch("graph.str_graph.screen_entities", return_value={}),
+            patch(
+                "graph.str_graph.screen_entities_async",
+                new=AsyncMock(return_value={}),
+            ),
         ):
-            final_state = run_str_graph(_make_request_dict())
+            final_state = await run_str_graph(_make_request_dict())
 
         assert isinstance(final_state, dict)
-        assert "errors" in final_state
+        assert final_state.get("errors")
 
 
 # ---------------------------------------------------------------------------
@@ -268,10 +261,13 @@ class TestFullPipelineMocked:
     reason="ANTHROPIC_API_KEY not set -- skipping live LLM test",
 )
 class TestLiveIntegration:
-    def test_demo_scenario_live(self):
+    async def test_demo_scenario_live(self):
         """Full pipeline with real Claude API and demo scenario."""
-        with patch("graph.str_graph.screen_entities", return_value=MOCK_SANCTIONS_RESPONSE_CLEAN):
-            final_state = run_str_graph(_make_request_dict())
+        with patch(
+            "graph.str_graph.screen_entities_async",
+            new=AsyncMock(return_value=MOCK_SANCTIONS_RESPONSE_CLEAN),
+        ):
+            final_state = await run_str_graph(_make_request_dict())
 
         assert final_state["risk_level"] == EXPECTED_RISK_LEVEL
         assert final_state["confidence"] >= 0.6

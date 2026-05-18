@@ -25,38 +25,7 @@ Ta tache est d'extraire de maniere structuree :
 2. Les details de la ou des transactions
 3. Les indicateurs de risque apparents
 
-Reponds UNIQUEMENT en JSON valide. Aucun texte avant ou apres le JSON.
-Aucune balise markdown. Uniquement le JSON brut.
-
-Format de reponse requis :
-{
-  "entities": [
-    {
-      "name": "string",
-      "name_arabic": "string or null",
-      "entity_type": "person | company",
-      "id_number": "string or null",
-      "nationality": "ISO-2 or null",
-      "country": "ISO-2 or country name or null",
-      "address": "string or null",
-      "is_pep": false
-    }
-  ],
-  "transaction": {
-    "transaction_id": "string or null",
-    "date": "YYYY-MM-DD or null",
-    "amount": number or null,
-    "currency": "TND",
-    "transaction_type": "virement | especes | cheque | crypto | autre",
-    "sender": { ...entity fields... },
-    "receiver": { ...entity fields... },
-    "intermediaries": [ ...entity list... ],
-    "description": "string or null",
-    "red_flags": ["string"],
-    "no_prior_relationship": true | false
-  },
-  "initial_red_flags": ["string"]
-}
+Utilise l'outil extract_entities pour retourner les donnees extraites.
 """
 
 ENTITY_EXTRACTION_USER: str = """
@@ -112,6 +81,79 @@ Date de la declaration : {declaration_date}
 """
 
 # ---------------------------------------------------------------------------
+# Tool schema for structured entity extraction (tool_use)
+# ---------------------------------------------------------------------------
+
+_ENTITY_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string"},
+        "name_arabic": {"type": ["string", "null"]},
+        "entity_type": {"type": "string", "enum": ["person", "company"]},
+        "id_number": {"type": ["string", "null"]},
+        "nationality": {"type": ["string", "null"]},
+        "country": {"type": ["string", "null"]},
+        "address": {"type": ["string", "null"]},
+        "is_pep": {"type": "boolean"},
+    },
+    "required": ["name", "entity_type", "is_pep"],
+}
+
+EXTRACTION_TOOL: dict = {
+    "name": "extract_entities",
+    "description": (
+        "Extrait les entites, la transaction et les indicateurs de risque "
+        "d'une description de transaction suspecte AML."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "entities": {
+                "type": "array",
+                "description": "Toutes les personnes physiques et morales mentionnees",
+                "items": _ENTITY_SCHEMA,
+            },
+            "transaction": {
+                "type": "object",
+                "description": "Details de la transaction suspecte",
+                "properties": {
+                    "transaction_id": {"type": ["string", "null"]},
+                    "date": {
+                        "type": ["string", "null"],
+                        "description": "Format YYYY-MM-DD",
+                    },
+                    "amount": {"type": ["number", "null"]},
+                    "currency": {"type": "string", "default": "TND"},
+                    "transaction_type": {
+                        "type": "string",
+                        "enum": ["virement", "especes", "cheque", "crypto", "autre"],
+                    },
+                    "sender": _ENTITY_SCHEMA,
+                    "receiver": _ENTITY_SCHEMA,
+                    "intermediaries": {
+                        "type": "array",
+                        "items": _ENTITY_SCHEMA,
+                    },
+                    "description": {"type": ["string", "null"]},
+                    "red_flags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "no_prior_relationship": {"type": "boolean"},
+                },
+                "required": ["transaction_type", "sender", "receiver"],
+            },
+            "initial_red_flags": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Indicateurs de risque initiaux identifies",
+            },
+        },
+        "required": ["entities", "transaction", "initial_red_flags"],
+    },
+}
+
+# ---------------------------------------------------------------------------
 # LLM configuration constants
 # ---------------------------------------------------------------------------
 
@@ -134,12 +176,7 @@ def call_llm(
     user: str,
     case_id: str,
 ) -> Optional[str]:
-    """Call the Claude API with the given system and user prompts.
-
-    Args:
-        system: System prompt (module-level constant).
-        user: User message (formatted from constant template).
-        case_id: Case ID for structured logging.
+    """Text-only LLM call -- used for narrative generation.
 
     Returns:
         LLM response text, or None on failure.
@@ -158,6 +195,54 @@ def call_llm(
         content = message.content[0].text if message.content else None
         log.info("llm_call_success", model=LLM_MODEL, tokens=message.usage.output_tokens)
         return content
+
+    except anthropic.APITimeoutError:
+        log.error("llm_timeout", model=LLM_MODEL, timeout=LLM_TIMEOUT)
+        return None
+    except anthropic.APIError as exc:
+        log.error("llm_api_error", error=str(exc))
+        return None
+
+
+def call_llm_structured(
+    system: str,
+    user: str,
+    case_id: str,
+) -> Optional[dict]:
+    """Structured LLM call via tool_use -- guarantees schema-validated output.
+
+    Forces Claude to respond using the extract_entities tool, so the response
+    is always a validated dict matching EXTRACTION_TOOL's input_schema.
+
+    Returns:
+        Parsed tool input dict, or None on failure.
+    """
+    log = logger.bind(case_id=case_id)
+    client = get_anthropic_client()
+
+    try:
+        message = client.messages.create(
+            model=LLM_MODEL,
+            max_tokens=LLM_MAX_TOKENS,
+            temperature=LLM_TEMPERATURE,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+            tools=[EXTRACTION_TOOL],
+            tool_choice={"type": "tool", "name": "extract_entities"},
+        )
+        tool_block = next(
+            (b for b in message.content if b.type == "tool_use"),
+            None,
+        )
+        if not tool_block:
+            log.error("no_tool_use_block_in_response")
+            return None
+        log.info(
+            "llm_structured_call_success",
+            model=LLM_MODEL,
+            tokens=message.usage.output_tokens,
+        )
+        return tool_block.input
 
     except anthropic.APITimeoutError:
         log.error("llm_timeout", model=LLM_MODEL, timeout=LLM_TIMEOUT)

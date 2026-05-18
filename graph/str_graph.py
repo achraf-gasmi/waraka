@@ -1,7 +1,8 @@
 """LangGraph StateGraph for STR drafting -- 5 nodes, linear, no cycles."""
 
+import operator
 from datetime import datetime
-from typing import TypedDict, Optional
+from typing import Annotated, TypedDict, Optional
 
 import structlog
 from langgraph.graph import StateGraph, END
@@ -12,14 +13,15 @@ from agents.str_agent import (
     NARRATIVE_GENERATION_SYSTEM,
     NARRATIVE_GENERATION_USER,
     call_llm,
+    call_llm_structured,
 )
 from models.schemas import Entity, Transaction, RiskLevel
 from tools.goaml_tool import build_str_xml
 from tools.ner_tool import (
-    extract_entities_from_llm_response,
+    extract_entities_from_structured_response,
     apply_sanctions_to_entities,
 )
-from tools.sanctions_tool import screen_entities
+from tools.sanctions_tool import screen_entities_async
 
 logger = structlog.get_logger()
 
@@ -74,28 +76,30 @@ RISK_RULES: list[dict] = [
 
 # ---------------------------------------------------------------------------
 # LangGraph state
+# Annotated[list, operator.add] fields accumulate across nodes (append
+# semantics). All other fields use replace semantics (last write wins).
 # ---------------------------------------------------------------------------
 
 class STRState(TypedDict):
-    request: dict                    # STRDraftRequest as dict
-    extracted_entities: list         # List of Entity dicts
-    extracted_transaction: dict      # Transaction dict
-    sanctions_results: dict          # {entity_name: {hit: bool, detail: str}}
+    request: dict
+    extracted_entities: list
+    extracted_transaction: dict
+    sanctions_results: dict
     risk_indicators: list[str]
     risk_level: str
     confidence: float
     narrative_fr: str
     goaml_xml: str
-    analyst_notes: list[str]
-    errors: list[str]
+    analyst_notes: Annotated[list[str], operator.add]
+    errors: Annotated[list[str], operator.add]
 
 
 # ---------------------------------------------------------------------------
 # Node 1: extract_entities
 # ---------------------------------------------------------------------------
 
-def extract_entities_node(state: STRState) -> STRState:
-    """Extract entities and transaction from analyst free text via Claude."""
+def extract_entities_node(state: STRState) -> dict:
+    """Extract entities and transaction from analyst free text via Claude tool_use."""
     request = state["request"]
     case_id = request.get("case_id", "unknown")
     log = logger.bind(case_id=case_id, node="extract_entities")
@@ -106,43 +110,43 @@ def extract_entities_node(state: STRState) -> STRState:
         reporting_institution=request.get("reporting_institution", ""),
     )
 
-    llm_response = call_llm(
+    data = call_llm_structured(
         system=ENTITY_EXTRACTION_SYSTEM,
         user=user_prompt,
         case_id=case_id,
     )
 
-    if not llm_response:
+    if not data:
         log.error("extraction_llm_failed")
-        state["errors"] = state.get("errors", []) + ["LLM extraction failed"]
-        state["extracted_entities"] = []
-        state["extracted_transaction"] = {}
-        return state
+        return {
+            "errors": ["LLM extraction failed"],
+            "extracted_entities": [],
+            "extracted_transaction": {},
+        }
 
-    entities, transaction, initial_red_flags = extract_entities_from_llm_response(
-        llm_response, case_id
+    entities, transaction, initial_red_flags = extract_entities_from_structured_response(
+        data, case_id
     )
 
-    state["extracted_entities"] = [e.model_dump() for e in entities]
-    state["extracted_transaction"] = (
-        transaction.model_dump(mode="json") if transaction else {}
-    )
-
-    existing_notes = state.get("analyst_notes", [])
+    result: dict = {
+        "extracted_entities": [e.model_dump() for e in entities],
+        "extracted_transaction": (
+            transaction.model_dump(mode="json") if transaction else {}
+        ),
+    }
     if initial_red_flags:
-        existing_notes = existing_notes + [f"Red flag detecte: {f}" for f in initial_red_flags]
-    state["analyst_notes"] = existing_notes
+        result["analyst_notes"] = [f"Red flag detecte: {f}" for f in initial_red_flags]
 
     log.info("node_complete", entity_count=len(entities), has_transaction=transaction is not None)
-    return state
+    return result
 
 
 # ---------------------------------------------------------------------------
 # Node 2: screen_sanctions
 # ---------------------------------------------------------------------------
 
-def screen_sanctions_node(state: STRState) -> STRState:
-    """Screen all extracted entities against OpenSanctions."""
+async def screen_sanctions_node(state: STRState) -> dict:
+    """Screen all extracted entities against OpenSanctions in parallel."""
     case_id = state["request"].get("case_id", "unknown")
     log = logger.bind(case_id=case_id, node="screen_sanctions")
     log.info("node_start")
@@ -152,40 +156,40 @@ def screen_sanctions_node(state: STRState) -> STRState:
 
     if not entity_names:
         log.warning("no_entities_to_screen")
-        state["sanctions_results"] = {}
-        return state
+        return {"sanctions_results": {}}
 
     try:
-        results = screen_entities(entity_names, case_id)
-        state["sanctions_results"] = results
+        results = await screen_entities_async(entity_names, case_id)
 
-        # Merge sanctions hits back into entity dicts
         entities = [Entity(**e) for e in entities_raw]
         updated = apply_sanctions_to_entities(entities, results)
-        state["extracted_entities"] = [e.model_dump() for e in updated]
 
         hits = [name for name, r in results.items() if r.get("hit")]
+        log.info("node_complete", screened=len(entity_names), hits=len(hits))
         if hits:
-            notes = state.get("analyst_notes", [])
-            notes = notes + [f"SANCTIONS HIT: {name}" for name in hits]
-            state["analyst_notes"] = notes
             log.warning("sanctions_hits_found", hits=hits)
+
+        partial: dict = {
+            "sanctions_results": results,
+            "extracted_entities": [e.model_dump() for e in updated],
+        }
+        if hits:
+            partial["analyst_notes"] = [f"SANCTIONS HIT: {name}" for name in hits]
+        return partial
 
     except Exception as exc:
         log.error("sanctions_screening_failed", error=str(exc))
-        state["sanctions_results"] = {}
-        notes = state.get("analyst_notes", [])
-        state["analyst_notes"] = notes + ["Verification sanctions echouee -- verifier manuellement"]
-
-    log.info("node_complete")
-    return state
+        return {
+            "sanctions_results": {},
+            "analyst_notes": ["Verification sanctions echouee -- verifier manuellement"],
+        }
 
 
 # ---------------------------------------------------------------------------
 # Node 3: assess_risk
 # ---------------------------------------------------------------------------
 
-def assess_risk_node(state: STRState) -> STRState:
+def assess_risk_node(state: STRState) -> dict:
     """Apply rule-based risk scoring to produce risk indicators and confidence."""
     case_id = state["request"].get("case_id", "unknown")
     log = logger.bind(case_id=case_id, node="assess_risk")
@@ -243,17 +247,17 @@ def assess_risk_node(state: STRState) -> STRState:
     else:
         risk_level = RiskLevel.LOW.value
 
-    state["risk_indicators"] = matched_labels
-    state["confidence"] = confidence
-    state["risk_level"] = risk_level
-
     log.info(
         "node_complete",
         risk_level=risk_level,
         confidence=confidence,
         indicator_count=len(matched_labels),
     )
-    return state
+    return {
+        "risk_indicators": matched_labels,
+        "confidence": confidence,
+        "risk_level": risk_level,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -300,25 +304,20 @@ def _summarize_sanctions(sanctions: dict) -> str:
     return "\n".join(lines)
 
 
-def generate_narrative_node(state: STRState) -> STRState:
+def generate_narrative_node(state: STRState) -> dict:
     """Generate a formal French compliance narrative via Claude."""
     request = state["request"]
     case_id = request.get("case_id", "unknown")
     log = logger.bind(case_id=case_id, node="generate_narrative")
     log.info("node_start")
 
-    entities_summary = _summarize_entities(state.get("extracted_entities", []))
-    transaction_summary = _summarize_transaction(state.get("extracted_transaction", {}))
-    risk_indicators_text = "\n".join(
-        f"- {r}" for r in state.get("risk_indicators", [])
-    ) or "Aucun indicateur identifie"
-    sanctions_summary = _summarize_sanctions(state.get("sanctions_results", {}))
-
     user_prompt = NARRATIVE_GENERATION_USER.format(
-        entities_summary=entities_summary,
-        transaction_summary=transaction_summary,
-        risk_indicators=risk_indicators_text,
-        sanctions_summary=sanctions_summary,
+        entities_summary=_summarize_entities(state.get("extracted_entities", [])),
+        transaction_summary=_summarize_transaction(state.get("extracted_transaction", {})),
+        risk_indicators="\n".join(
+            f"- {r}" for r in state.get("risk_indicators", [])
+        ) or "Aucun indicateur identifie",
+        sanctions_summary=_summarize_sanctions(state.get("sanctions_results", {})),
         reporting_institution=request.get("reporting_institution", "N/A"),
         declaration_date=datetime.utcnow().strftime("%d/%m/%Y"),
     )
@@ -331,23 +330,20 @@ def generate_narrative_node(state: STRState) -> STRState:
 
     if not narrative:
         log.error("narrative_llm_failed")
-        state["narrative_fr"] = (
-            "ERREUR: La generation du recit a echoue. Veuillez rediger manuellement."
-        )
-        notes = state.get("analyst_notes", [])
-        state["analyst_notes"] = notes + ["Recit non genere -- revision manuelle requise"]
-    else:
-        state["narrative_fr"] = narrative
-        log.info("node_complete", narrative_length=len(narrative))
+        return {
+            "narrative_fr": "ERREUR: La generation du recit a echoue. Veuillez rediger manuellement.",
+            "analyst_notes": ["Recit non genere -- revision manuelle requise"],
+        }
 
-    return state
+    log.info("node_complete", narrative_length=len(narrative))
+    return {"narrative_fr": narrative}
 
 
 # ---------------------------------------------------------------------------
 # Node 5: build_goaml_xml
 # ---------------------------------------------------------------------------
 
-def build_goaml_xml_node(state: STRState) -> STRState:
+def build_goaml_xml_node(state: STRState) -> dict:
     """Build valid goAML STR-T XML from structured state."""
     request = state["request"]
     case_id = request.get("case_id", "unknown")
@@ -355,25 +351,22 @@ def build_goaml_xml_node(state: STRState) -> STRState:
     log.info("node_start")
 
     case_ref = request.get("case_reference") or case_id
-    narrative = state.get("narrative_fr", "")
-    tx = state.get("extracted_transaction", {})
 
     try:
         xml = build_str_xml(
-            transaction=tx,
-            narrative=narrative,
+            transaction=state.get("extracted_transaction", {}),
+            narrative=state.get("narrative_fr", ""),
             case_ref=case_ref,
             reporting_entity_id=request.get("reporting_institution", "WARAKA_BANK"),
         )
-        state["goaml_xml"] = xml
         log.info("node_complete", xml_length=len(xml))
+        return {"goaml_xml": xml}
     except Exception as exc:
         log.error("xml_build_failed", error=str(exc))
-        state["goaml_xml"] = ""
-        notes = state.get("analyst_notes", [])
-        state["analyst_notes"] = notes + [f"Construction XML echouee: {exc}"]
-
-    return state
+        return {
+            "goaml_xml": "",
+            "analyst_notes": [f"Construction XML echouee: {exc}"],
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -398,7 +391,7 @@ _graph_builder.add_edge("build_goaml_xml", END)
 str_graph = _graph_builder.compile()
 
 
-def run_str_graph(request_dict: dict) -> STRState:
+async def run_str_graph(request_dict: dict) -> STRState:
     """Run the full STR drafting pipeline.
 
     Args:
@@ -420,4 +413,4 @@ def run_str_graph(request_dict: dict) -> STRState:
         "analyst_notes": [],
         "errors": [],
     }
-    return str_graph.invoke(initial_state)
+    return await str_graph.ainvoke(initial_state)

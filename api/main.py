@@ -83,7 +83,7 @@ async def draft_str(
     request_dict["case_id"] = case_id
 
     try:
-        final_state = run_str_graph(request_dict)
+        final_state = await run_str_graph(request_dict)
     except Exception as exc:
         log.error("graph_execution_failed", error=str(exc))
         raise HTTPException(
