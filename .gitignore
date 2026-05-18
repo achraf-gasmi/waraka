@@ -28,6 +28,12 @@ postgres_data/
 .vscode/
 .idea/
 
+# Claude Code
+.claude/
+
+# Documentation
+*.md
+
 # OS
 .DS_Store
 Thumbs.db
