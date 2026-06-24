@@ -592,14 +592,23 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Minimal custom CSS -- dark theme throughout, all text colors explicit
+# Minimal custom CSS -- dark theme throughout, all text colors explicit.
+# !important is required because Streamlit/HF Spaces inject their own
+# sidebar background rule after this block, which otherwise wins.
 st.markdown("""
 <style>
-    [data-testid="stSidebar"] {
-        background: #161a23;
+    [data-testid="stSidebar"],
+    [data-testid="stSidebarContent"],
+    section[data-testid="stSidebar"] > div {
+        background-color: #161a23 !important;
         border-right: 1px solid #2a2f3a;
     }
-    [data-testid="stSidebar"] * { color: #fafafa; }
+    [data-testid="stSidebar"] * { color: #fafafa !important; }
+    [data-testid="stSidebar"] input,
+    [data-testid="stSidebar"] textarea {
+        background-color: #0e1117 !important;
+        color: #fafafa !important;
+    }
     .stTabs [data-baseweb="tab-list"] { gap: 8px; }
     .stTabs [data-baseweb="tab"] {
         font-weight: 600;
