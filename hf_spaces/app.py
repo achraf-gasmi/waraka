@@ -39,16 +39,16 @@ MODE: str = (
 )
 
 RISK_COLORS: dict = {
-    "critical": "#c62828",
-    "high":     "#e65100",
-    "medium":   "#f9a825",
-    "low":      "#2e7d32",
+    "critical": "#ff6b6b",
+    "high":     "#ffa94d",
+    "medium":   "#ffd43b",
+    "low":      "#69db7c",
 }
 RISK_BG: dict = {
-    "critical": "#ffebee",
-    "high":     "#fff3e0",
-    "medium":   "#fffde7",
-    "low":      "#e8f5e9",
+    "critical": "#3a1c1c",
+    "high":     "#3a2a14",
+    "medium":   "#3a3414",
+    "low":      "#1c3a22",
 }
 RISK_LABELS: dict = {
     "critical": "CRITIQUE",
@@ -592,30 +592,30 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Minimal custom CSS
+# Minimal custom CSS -- dark theme throughout, all text colors explicit
 st.markdown("""
 <style>
-    [data-testid="stSidebar"] { background: #f8f9fa; }
+    [data-testid="stSidebar"] {
+        background: #161a23;
+        border-right: 1px solid #2a2f3a;
+    }
+    [data-testid="stSidebar"] * { color: #fafafa; }
     .stTabs [data-baseweb="tab-list"] { gap: 8px; }
     .stTabs [data-baseweb="tab"] {
         font-weight: 600;
         padding: 8px 20px;
         border-radius: 6px 6px 0 0;
+        color: #c9d1d9;
     }
-    .metric-card {
-        background: #ffffff;
-        border: 1px solid #e0e0e0;
-        border-radius: 8px;
-        padding: 16px 20px;
-        margin-bottom: 8px;
-    }
+    .stTabs [aria-selected="true"] { color: #fafafa; }
     .indicator-item {
-        background: #fff8e1;
-        border-left: 4px solid #f9a825;
+        background: #2a2410;
+        border-left: 4px solid #ffd43b;
         border-radius: 0 6px 6px 0;
         padding: 8px 14px;
         margin: 4px 0;
         font-size: 0.95em;
+        color: #f5e6b8;
     }
 </style>
 """, unsafe_allow_html=True)
