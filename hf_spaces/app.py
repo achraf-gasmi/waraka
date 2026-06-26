@@ -23,7 +23,7 @@ import streamlit as st
 
 GEMINI_API_KEY: str = os.environ.get("GEMINI_API_KEY", "")
 
-LLM_MODEL: str = "gemini-1.5-flash"
+LLM_MODEL: str = "gemini-2.5-flash"
 LLM_TEMPERATURE: float = 0.0
 LLM_TIMEOUT: float = 45.0
 LLM_MAX_TOKENS: int = 4096
@@ -485,7 +485,7 @@ if not GEMINI_API_KEY:
     )
     st.stop()
 
-st.success("Connecté à l'API Google Gemini (gemini-1.5-flash).")
+st.success("Connecté à l'API Google Gemini (gemini-2.5-flash).")
 st.divider()
 
 # ---------------------------------------------------------------------------
