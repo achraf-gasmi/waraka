@@ -15,27 +15,20 @@ short_description: Agent IA de rédaction de déclarations de soupçon goAML (CT
 
 Système d'aide à la rédaction de déclarations de soupçon (STR) conforme goAML pour les banques tunisiennes.
 
-## Modes de fonctionnement
-
-| Mode | Condition | Comportement |
-|---|---|---|
-| **API** | `WARAKA_API_URL` défini | Appel du backend FastAPI complet |
-| **Direct** | `ANTHROPIC_API_KEY` défini | Pipeline Claude intégré, sans base de données |
-| **Démonstration** | Aucune clé | Scénario fictif illustratif |
+Cette application appelle directement l'API Anthropic (Claude) — sans backend FastAPI,
+sans base de données, sans LangGraph. Il n'existe pas de mode démonstration : une clé
+`ANTHROPIC_API_KEY` valide est requise pour que l'application fonctionne.
 
 ## Configuration (Secrets HF Spaces)
 
-Définissez dans **Settings → Secrets** :
+Définissez dans **Settings → Variables and secrets** :
 
 ```
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-Optionnel (pour connecter un backend complet) :
-```
-WARAKA_API_URL=https://your-backend.com
-WARAKA_API_KEY=your-api-key
-```
+Sans cette clé, l'application affiche un message d'erreur expliquant comment la
+configurer et s'arrête — aucune donnée fictive n'est affichée.
 
 ## Contexte réglementaire
 

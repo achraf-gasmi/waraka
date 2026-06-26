@@ -1,11 +1,10 @@
 """
-Waraka -- Interface de demonstration Hugging Face Spaces
+Waraka -- Hugging Face Spaces interface
 Declaration de Soupcon (STR) -- CTAF / goAML
 
-Modes de fonctionnement (par ordre de priorite) :
-  1. API mode    : WARAKA_API_URL defini -> appel du backend FastAPI
-  2. Direct mode : ANTHROPIC_API_KEY defini -> pipeline inline sans base de donnees
-  3. Demo mode   : aucune cle -> scenario de demonstration statique
+This app calls the real Anthropic API directly (no FastAPI backend, no
+database, no LangGraph). It requires ANTHROPIC_API_KEY to be configured
+as a secret in the HF Space settings -- there is no demo/mock fallback.
 """
 
 import os
@@ -16,27 +15,18 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import Optional
 
-import httpx
 import streamlit as st
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-WARAKA_API_URL: str = os.environ.get("WARAKA_API_URL", "")
-WARAKA_API_KEY: str = os.environ.get("WARAKA_API_KEY", "waraka-dev-key-change-in-prod")
 ANTHROPIC_API_KEY: str = os.environ.get("ANTHROPIC_API_KEY", "")
 
 LLM_MODEL: str = "claude-sonnet-4-6"
 LLM_TEMPERATURE: float = 0.0
 LLM_TIMEOUT: float = 45.0
 LLM_MAX_TOKENS: int = 4096
-
-MODE: str = (
-    "api" if WARAKA_API_URL
-    else "direct" if ANTHROPIC_API_KEY
-    else "demo"
-)
 
 RISK_COLORS: dict = {
     "critical": "#ff6b6b",
@@ -146,117 +136,7 @@ Institution declarante : {reporting_institution}
 Date de la declaration : {declaration_date}"""
 
 # ---------------------------------------------------------------------------
-# Static demo data (mode demo)
-# ---------------------------------------------------------------------------
-
-DEMO_RESULT: dict = {
-    "case_id": "DEMO-2026-001",
-    "status": "draft",
-    "confidence": 0.90,
-    "risk_level": "critical",
-    "extracted_entities": [
-        {"name": "Immobiliere Carthage SARL", "entity_type": "company",
-         "id_number": "B123456789", "country": "TN", "is_pep": False, "sanctions_hit": False},
-        {"name": "Gulf Properties FZE", "entity_type": "company",
-         "id_number": None, "country": "AE", "is_pep": False, "sanctions_hit": False},
-        {"name": "Mediterranean Holdings Ltd", "entity_type": "company",
-         "id_number": None, "country": "MT", "is_pep": False, "sanctions_hit": False},
-        {"name": "Atlantic Capital SA", "entity_type": "company",
-         "id_number": None, "country": "LU", "is_pep": False, "sanctions_hit": False},
-    ],
-    "risk_indicators": [
-        "Transaction vers une juridiction a haut risque selon le GAFI (Emirats Arabes Unis)",
-        "Montant superieur a 500 000 TND sans justification economique apparente (850 000 TND)",
-        "Recours a plusieurs intermediaires sans justification commerciale (2 intermediaires)",
-        "Aucune relation commerciale anterieure avec le beneficiaire",
-    ],
-    "narrative_fr": (
-        "La presente declaration de soupcon est etablie par la direction de la conformite "
-        "de BH Bank a la suite de l'analyse d'une operation de virement international "
-        "presentant plusieurs indicateurs de risque significatifs.\n\n"
-        "Le 15 mars 2026, la societe Immobiliere Carthage SARL, immatriculee au Registre "
-        "du Commerce de Tunis sous le numero B123456789 et cliente de notre etablissement "
-        "depuis 2019, a initie un virement d'un montant de 850 000 dinars tunisiens (TND) "
-        "en faveur de la societe Gulf Properties FZE, domiciliee a Abu Dhabi aux Emirats "
-        "Arabes Unis. L'operation a transite par deux societes intermediaires : "
-        "Mediterranean Holdings Ltd, enregistree a Malte, et Atlantic Capital SA, "
-        "etablie au Luxembourg.\n\n"
-        "L'analyse de cette operation revele les indicateurs de risque suivants :\n\n"
-        "Premierement, le pays destinataire, les Emirats Arabes Unis, figure sur la liste "
-        "des juridictions sous surveillance renforcee du GAFI, ce qui constitue un facteur "
-        "de risque eleve conformement aux dispositions de la loi organique n° 2015-26.\n\n"
-        "Deuxiemement, le montant de 850 000 TND depasse significativement le seuil de "
-        "500 000 TND et apparait disproportionne au regard du profil de risque moyen "
-        "attribue au client.\n\n"
-        "Troisiemement, le recours a deux societes intermediaires -- l'une a Malte, l'autre "
-        "au Luxembourg -- sans justification commerciale documentee constitue un schema "
-        "operationnel atypique susceptible de complexifier la tracabilite des fonds.\n\n"
-        "Quatriemement, nos systemes ne font etat d'aucune relation commerciale anterieure "
-        "entre Immobiliere Carthage SARL et les beneficiaires de ce virement. Le client a "
-        "invoque un investissement immobilier, sans pour autant fournir le contrat ou "
-        "tout autre document justificatif a l'appui de cette affirmation.\n\n"
-        "Au regard de l'ensemble de ces elements, la direction de la conformite estime que "
-        "cette operation presente des caracteristiques susceptibles d'etre liees a des "
-        "activites de blanchiment de capitaux et decide, en application de l'article 107 "
-        "de la loi organique n° 2015-26 telle que modifiee, de la declarer aupres de la "
-        "Commission Tunisienne des Analyses Financieres."
-    ),
-    "goaml_xml": """<?xml version="1.0" encoding="UTF-8"?>
-<report>
-  <rentity_id>BH Bank</rentity_id>
-  <rentity_branch>HQ</rentity_branch>
-  <submission_code>E</submission_code>
-  <report_code>STR</report_code>
-  <entity_reference>DEMO-2026-001</entity_reference>
-  <fiu_ref_number />
-  <submission_date>2026-03-20</submission_date>
-  <currency_code_local>TND</currency_code_local>
-  <reporting_person>
-    <role>R</role>
-    <occupation>COMPLIANCE_OFFICER</occupation>
-  </reporting_person>
-  <location>
-    <address_type>B</address_type>
-    <country>TN</country>
-  </location>
-  <transaction>
-    <transactionnumber>TX-2026-03-001</transactionnumber>
-    <transaction_location>TN</transaction_location>
-    <date_transaction>2026-03-15</date_transaction>
-    <teller />
-    <authorized />
-    <amount_local>850000.0</amount_local>
-    <t_from_my_client>
-      <name>Immobiliere Carthage SARL</name>
-      <registration_number>B123456789</registration_number>
-      <country>TN</country>
-    </t_from_my_client>
-    <t_to_my_client>
-      <name>Gulf Properties FZE</name>
-      <country>AE</country>
-    </t_to_my_client>
-    <t_intermediary sequence="1">
-      <name>Mediterranean Holdings Ltd</name>
-      <country>MT</country>
-    </t_intermediary>
-    <t_intermediary sequence="2">
-      <name>Atlantic Capital SA</name>
-      <country>LU</country>
-    </t_intermediary>
-  </transaction>
-  <narrative>Declaration de soupcon -- voir recit complet dans le dossier DEMO-2026-001.</narrative>
-</report>""",
-    "sanctions_checked": False,
-    "analyst_notes": [
-        "Mode demonstration -- donnees fictives a titre illustratif uniquement",
-        "Activer ANTHROPIC_API_KEY pour analyser un cas reel",
-    ],
-    "latency_ms": 0,
-    "is_demo": True,
-}
-
-# ---------------------------------------------------------------------------
-# Inline pipeline helpers (mode direct -- no DB, no LangGraph)
+# Inline pipeline -- direct Claude calls, no DB, no LangGraph
 # ---------------------------------------------------------------------------
 
 def _call_claude(system: str, user: str) -> Optional[str]:
@@ -272,7 +152,7 @@ def _call_claude(system: str, user: str) -> Optional[str]:
         )
         return msg.content[0].text if msg.content else None
     except Exception as exc:
-        st.warning(f"Erreur LLM : {exc}")
+        st.error(f"Erreur lors de l'appel a l'API Claude : {exc}")
         return None
 
 
@@ -412,12 +292,13 @@ def _build_xml(tx: dict, narrative: str, case_ref: str, institution: str) -> str
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + xml_str
 
 
-def _run_inline_pipeline(
+def run_analysis(
     analyst_input: str,
     institution: str,
     analyst_id: str,
     case_reference: str,
-) -> dict:
+) -> Optional[dict]:
+    """Run the full pipeline against the real Claude API. Returns None on failure."""
     case_id = str(uuid.uuid4())[:8].upper()
     full_case_ref = case_reference or f"CASE-{case_id}"
     start = datetime.now(timezone.utc)
@@ -428,34 +309,35 @@ def _run_inline_pipeline(
         reporting_institution=institution,
     )
     raw_json = _call_claude(ENTITY_EXTRACTION_SYSTEM, user_msg)
+    if raw_json is None:
+        return None
 
     tx: dict = {}
     entities: list = []
     red_flags: list = []
 
-    if raw_json:
-        try:
-            cleaned = raw_json.strip()
-            if cleaned.startswith("```"):
-                lines = cleaned.split("\n")
-                cleaned = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-            data = json.loads(cleaned)
-            entities = data.get("entities", [])
-            tx = data.get("transaction", {})
-            red_flags = data.get("initial_red_flags", [])
-            # Normalize countries
-            for e in entities:
-                e["country"] = _normalize_country(e.get("country"))
-                e.setdefault("is_pep", False)
-                e.setdefault("sanctions_hit", False)
-            for key in ("sender", "receiver"):
-                if tx.get(key):
-                    tx[key]["country"] = _normalize_country(tx[key].get("country"))
-                    tx[key].setdefault("is_pep", False)
-            for inter in tx.get("intermediaries", []) or []:
-                inter["country"] = _normalize_country(inter.get("country"))
-        except Exception:
-            pass
+    try:
+        cleaned = raw_json.strip()
+        if cleaned.startswith("```"):
+            lines = cleaned.split("\n")
+            cleaned = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+        data = json.loads(cleaned)
+        entities = data.get("entities", [])
+        tx = data.get("transaction", {})
+        red_flags = data.get("initial_red_flags", [])
+        for e in entities:
+            e["country"] = _normalize_country(e.get("country"))
+            e.setdefault("is_pep", False)
+            e.setdefault("sanctions_hit", False)
+        for key in ("sender", "receiver"):
+            if tx.get(key):
+                tx[key]["country"] = _normalize_country(tx[key].get("country"))
+                tx[key].setdefault("is_pep", False)
+        for inter in tx.get("intermediaries", []) or []:
+            inter["country"] = _normalize_country(inter.get("country"))
+    except Exception as exc:
+        st.error(f"Erreur lors de l'analyse de la reponse de Claude : {exc}")
+        return None
 
     # Step 2 -- risk assessment (rule-based)
     indicators, confidence, risk_level = _assess_risk(tx, {})
@@ -481,9 +363,9 @@ def _run_inline_pipeline(
         reporting_institution=institution,
         declaration_date=datetime.now(timezone.utc).strftime("%d/%m/%Y"),
     )
-    narrative = _call_claude(NARRATIVE_GENERATION_SYSTEM, narrative_user) or (
-        "ERREUR : generation du recit echouee. Veuillez rediger manuellement."
-    )
+    narrative = _call_claude(NARRATIVE_GENERATION_SYSTEM, narrative_user)
+    if narrative is None:
+        return None
 
     # Step 4 -- XML
     xml = _build_xml(tx, narrative, full_case_ref, institution)
@@ -491,8 +373,6 @@ def _run_inline_pipeline(
     latency_ms = int((datetime.now(timezone.utc) - start).total_seconds() * 1000)
 
     analyst_notes = [f"Indicateur initial : {f}" for f in red_flags]
-    if not ANTHROPIC_API_KEY:
-        analyst_notes.append("Cle API manquante -- mode demonstration")
 
     return {
         "case_id": full_case_ref,
@@ -506,52 +386,7 @@ def _run_inline_pipeline(
         "sanctions_checked": False,
         "analyst_notes": analyst_notes,
         "latency_ms": latency_ms,
-        "is_demo": False,
     }
-
-
-# ---------------------------------------------------------------------------
-# Backend caller
-# ---------------------------------------------------------------------------
-
-def _call_api_backend(
-    analyst_input: str,
-    institution: str,
-    analyst_id: str,
-    case_reference: str,
-) -> dict:
-    payload = {
-        "analyst_input": analyst_input,
-        "reporting_institution": institution,
-        "analyst_id": analyst_id,
-        "case_reference": case_reference or None,
-    }
-    headers = {
-        "Authorization": f"Bearer {WARAKA_API_KEY}",
-        "Content-Type": "application/json",
-    }
-    resp = httpx.post(
-        f"{WARAKA_API_URL}/v1/str/draft",
-        json=payload,
-        headers=headers,
-        timeout=60.0,
-    )
-    resp.raise_for_status()
-    return resp.json()
-
-
-def run_analysis(
-    analyst_input: str,
-    institution: str,
-    analyst_id: str,
-    case_reference: str,
-) -> dict:
-    if MODE == "api":
-        return _call_api_backend(analyst_input, institution, analyst_id, case_reference)
-    elif MODE == "direct":
-        return _run_inline_pipeline(analyst_input, institution, analyst_id, case_reference)
-    else:
-        return DEMO_RESULT
 
 
 # ---------------------------------------------------------------------------
@@ -567,18 +402,6 @@ def _risk_badge(risk_level: str) -> str:
         f'border-radius:6px;padding:6px 18px;font-weight:700;font-size:1.1em;'
         f'letter-spacing:1px">{label}</span>'
     )
-
-
-def _mode_banner() -> None:
-    if MODE == "api":
-        st.success("Mode **API** : connecte au backend Waraka.")
-    elif MODE == "direct":
-        st.info("Mode **Direct** : pipeline Claude integre (sans base de donnees).")
-    else:
-        st.warning(
-            "Mode **Demonstration** : donnees fictives. "
-            "Definissez `ANTHROPIC_API_KEY` dans les secrets HF Spaces pour analyser un cas reel."
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -637,7 +460,25 @@ with col_title:
     st.markdown("## Waraka — Déclaration de Soupçon")
     st.caption("Système d'aide à la rédaction de déclarations de soupçon (STR) conforme goAML / CTAF")
 
-_mode_banner()
+st.divider()
+
+# ---------------------------------------------------------------------------
+# Hard gate -- no demo mode, no mock fallback. Stop here if no API key.
+# ---------------------------------------------------------------------------
+
+if not ANTHROPIC_API_KEY:
+    st.error(
+        "**Clé API manquante.** Cette application nécessite une clé Anthropic valide "
+        "pour fonctionner — il n'existe pas de mode démonstration.\n\n"
+        "**Pour configurer la clé sur Hugging Face Spaces :**\n"
+        "1. Ouvrez les **Settings** de ce Space\n"
+        "2. Allez dans la section **Variables and secrets**\n"
+        "3. Ajoutez un secret nommé `ANTHROPIC_API_KEY` avec votre clé Claude\n"
+        "4. Redémarrez le Space (Factory reboot)"
+    )
+    st.stop()
+
+st.success("Connecté à l'API Claude (claude-sonnet-4-6).")
 st.divider()
 
 # ---------------------------------------------------------------------------
@@ -650,17 +491,17 @@ with st.sidebar:
 
     institution = st.text_input(
         "Institution déclarante *",
-        value="BH Bank" if MODE == "demo" else "",
+        value="",
         placeholder="Ex : BH Bank",
     )
     analyst_id = st.text_input(
         "Identifiant analyste *",
-        value="ANA-001" if MODE == "demo" else "",
+        value="",
         placeholder="Ex : ANA-001",
     )
     case_reference = st.text_input(
         "Référence interne",
-        value="CAS-2026-DEMO" if MODE == "demo" else "",
+        value="",
         placeholder="Ex : CAS-2026-001 (optionnel)",
     )
 
@@ -688,19 +529,9 @@ with st.sidebar:
 # Main input area
 # ---------------------------------------------------------------------------
 
-DEMO_TEXT = (
-    "Notre client, la société Immobilière Carthage SARL (RC : B123456789, Tunis), "
-    "a effectué le 15 mars 2026 un virement de 850 000 TND vers une société dénommée "
-    "Gulf Properties FZE, domiciliée aux Émirats Arabes Unis (Abu Dhabi), via deux "
-    "sociétés intermédiaires : une à Malte (Mediterranean Holdings Ltd) et une au "
-    "Luxembourg (Atlantic Capital SA). Le client invoque un investissement immobilier "
-    "mais n'a fourni aucun contrat ni justificatif économique. Aucune relation "
-    "commerciale antérieure n'existe avec les bénéficiaires dans nos systèmes."
-)
-
 analyst_input = st.text_area(
     "Description de la transaction suspecte (en français)",
-    value=DEMO_TEXT if MODE == "demo" else "",
+    value="",
     height=180,
     placeholder=(
         "Décrivez la transaction suspecte : montants, entités, pays impliqués, "
@@ -716,30 +547,18 @@ if generer_btn:
     if not analyst_input.strip():
         st.error("Veuillez saisir une description de la transaction.")
     else:
-        status_text = {
-            "api":    "Appel du backend Waraka...",
-            "direct": "Analyse par Claude en cours (30 à 45 secondes)...",
-            "demo":   "Chargement du scénario de démonstration...",
-        }[MODE]
-
-        with st.spinner(status_text):
-            try:
-                result = run_analysis(
-                    analyst_input.strip(),
-                    institution.strip(),
-                    analyst_id.strip(),
-                    case_reference.strip(),
-                )
-                st.session_state["result"] = result
-                st.session_state["validation_done"] = False
-                st.session_state["show_corrections"] = False
-                st.rerun()
-            except httpx.TimeoutException:
-                st.error("Délai d'attente dépassé. Réessayez dans quelques instants.")
-            except httpx.HTTPStatusError as exc:
-                st.error(f"Erreur API ({exc.response.status_code}) : {exc.response.text[:300]}")
-            except Exception as exc:
-                st.error(f"Erreur inattendue : {exc}")
+        with st.spinner("Analyse par Claude en cours (30 à 45 secondes)..."):
+            result = run_analysis(
+                analyst_input.strip(),
+                institution.strip(),
+                analyst_id.strip(),
+                case_reference.strip(),
+            )
+        if result is not None:
+            st.session_state["result"] = result
+            st.session_state["validation_done"] = False
+            st.session_state["show_corrections"] = False
+            st.rerun()
 
 # ---------------------------------------------------------------------------
 # Results
@@ -821,8 +640,6 @@ if "result" in st.session_state:
             for note in notes:
                 if "SANCTIONS" in note.upper():
                     st.error(f"🔴 {note}")
-                elif "ERREUR" in note.upper() or "DEMO" in note.upper():
-                    st.warning(f"ℹ️ {note}")
                 else:
                     st.info(f"📌 {note}")
 
