@@ -2,8 +2,8 @@
 Waraka -- Hugging Face Spaces interface
 Declaration de Soupcon (STR) -- CTAF / goAML
 
-This app calls the real Anthropic API directly (no FastAPI backend, no
-database, no LangGraph). It requires ANTHROPIC_API_KEY to be configured
+This app calls the real Google Gemini API directly (no FastAPI backend, no
+database, no LangGraph). It requires GEMINI_API_KEY to be configured
 as a secret in the HF Space settings -- there is no demo/mock fallback.
 """
 
@@ -21,9 +21,9 @@ import streamlit as st
 # Configuration
 # ---------------------------------------------------------------------------
 
-ANTHROPIC_API_KEY: str = os.environ.get("ANTHROPIC_API_KEY", "")
+GEMINI_API_KEY: str = os.environ.get("GEMINI_API_KEY", "")
 
-LLM_MODEL: str = "claude-sonnet-4-6"
+LLM_MODEL: str = "gemini-1.5-flash"
 LLM_TEMPERATURE: float = 0.0
 LLM_TIMEOUT: float = 45.0
 LLM_MAX_TOKENS: int = 4096
@@ -136,23 +136,29 @@ Institution declarante : {reporting_institution}
 Date de la declaration : {declaration_date}"""
 
 # ---------------------------------------------------------------------------
-# Inline pipeline -- direct Claude calls, no DB, no LangGraph
+# Inline pipeline -- direct Gemini calls, no DB, no LangGraph
 # ---------------------------------------------------------------------------
 
-def _call_claude(system: str, user: str) -> Optional[str]:
+def _call_gemini(system: str, user: str) -> Optional[str]:
     try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, timeout=LLM_TIMEOUT)
-        msg = client.messages.create(
-            model=LLM_MODEL,
-            max_tokens=LLM_MAX_TOKENS,
-            temperature=LLM_TEMPERATURE,
-            system=system,
-            messages=[{"role": "user", "content": user}],
+        import google.generativeai as genai
+
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel(
+            model_name=LLM_MODEL,
+            system_instruction=system,
+            generation_config=genai.types.GenerationConfig(
+                temperature=LLM_TEMPERATURE,
+                max_output_tokens=LLM_MAX_TOKENS,
+            ),
         )
-        return msg.content[0].text if msg.content else None
+        response = model.generate_content(
+            user,
+            request_options={"timeout": LLM_TIMEOUT},
+        )
+        return response.text if response and response.text else None
     except Exception as exc:
-        st.error(f"Erreur lors de l'appel a l'API Claude : {exc}")
+        st.error(f"Erreur lors de l'appel a l'API Gemini : {exc}")
         return None
 
 
@@ -298,7 +304,7 @@ def run_analysis(
     analyst_id: str,
     case_reference: str,
 ) -> Optional[dict]:
-    """Run the full pipeline against the real Claude API. Returns None on failure."""
+    """Run the full pipeline against the real Gemini API. Returns None on failure."""
     case_id = str(uuid.uuid4())[:8].upper()
     full_case_ref = case_reference or f"CASE-{case_id}"
     start = datetime.now(timezone.utc)
@@ -308,7 +314,7 @@ def run_analysis(
         analyst_input=analyst_input,
         reporting_institution=institution,
     )
-    raw_json = _call_claude(ENTITY_EXTRACTION_SYSTEM, user_msg)
+    raw_json = _call_gemini(ENTITY_EXTRACTION_SYSTEM, user_msg)
     if raw_json is None:
         return None
 
@@ -336,7 +342,7 @@ def run_analysis(
         for inter in tx.get("intermediaries", []) or []:
             inter["country"] = _normalize_country(inter.get("country"))
     except Exception as exc:
-        st.error(f"Erreur lors de l'analyse de la reponse de Claude : {exc}")
+        st.error(f"Erreur lors de l'analyse de la reponse de Gemini : {exc}")
         return None
 
     # Step 2 -- risk assessment (rule-based)
@@ -363,7 +369,7 @@ def run_analysis(
         reporting_institution=institution,
         declaration_date=datetime.now(timezone.utc).strftime("%d/%m/%Y"),
     )
-    narrative = _call_claude(NARRATIVE_GENERATION_SYSTEM, narrative_user)
+    narrative = _call_gemini(NARRATIVE_GENERATION_SYSTEM, narrative_user)
     if narrative is None:
         return None
 
@@ -466,19 +472,20 @@ st.divider()
 # Hard gate -- no demo mode, no mock fallback. Stop here if no API key.
 # ---------------------------------------------------------------------------
 
-if not ANTHROPIC_API_KEY:
+if not GEMINI_API_KEY:
     st.error(
-        "**Clé API manquante.** Cette application nécessite une clé Anthropic valide "
+        "**Clé API manquante.** Cette application nécessite une clé Google Gemini valide "
         "pour fonctionner — il n'existe pas de mode démonstration.\n\n"
         "**Pour configurer la clé sur Hugging Face Spaces :**\n"
         "1. Ouvrez les **Settings** de ce Space\n"
         "2. Allez dans la section **Variables and secrets**\n"
-        "3. Ajoutez un secret nommé `ANTHROPIC_API_KEY` avec votre clé Claude\n"
+        "3. Ajoutez un secret nommé `GEMINI_API_KEY` avec votre clé Gemini "
+        "(obtenue sur [aistudio.google.com](https://aistudio.google.com/app/apikey))\n"
         "4. Redémarrez le Space (Factory reboot)"
     )
     st.stop()
 
-st.success("Connecté à l'API Claude (claude-sonnet-4-6).")
+st.success("Connecté à l'API Google Gemini (gemini-1.5-flash).")
 st.divider()
 
 # ---------------------------------------------------------------------------
@@ -547,7 +554,7 @@ if generer_btn:
     if not analyst_input.strip():
         st.error("Veuillez saisir une description de la transaction.")
     else:
-        with st.spinner("Analyse par Claude en cours (30 à 45 secondes)..."):
+        with st.spinner("Analyse par Gemini en cours (30 à 45 secondes)..."):
             result = run_analysis(
                 analyst_input.strip(),
                 institution.strip(),

@@ -15,17 +15,20 @@ short_description: Agent IA de rédaction de déclarations de soupçon goAML (CT
 
 Système d'aide à la rédaction de déclarations de soupçon (STR) conforme goAML pour les banques tunisiennes.
 
-Cette application appelle directement l'API Anthropic (Claude) — sans backend FastAPI,
-sans base de données, sans LangGraph. Il n'existe pas de mode démonstration : une clé
-`ANTHROPIC_API_KEY` valide est requise pour que l'application fonctionne.
+Cette application appelle directement l'API Google Gemini (gemini-1.5-flash) — sans backend
+FastAPI, sans base de données, sans LangGraph. Il n'existe pas de mode démonstration : une clé
+`GEMINI_API_KEY` valide est requise pour que l'application fonctionne.
 
 ## Configuration (Secrets HF Spaces)
 
 Définissez dans **Settings → Variables and secrets** :
 
 ```
-ANTHROPIC_API_KEY=sk-ant-...
+GEMINI_API_KEY=AIza...
 ```
+
+Obtenez une clé gratuite sur [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)
+(gemini-1.5-flash dispose d'un palier gratuit).
 
 Sans cette clé, l'application affiche un message d'erreur expliquant comment la
 configurer et s'arrête — aucune donnée fictive n'est affichée.
