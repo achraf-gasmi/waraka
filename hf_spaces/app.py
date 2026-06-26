@@ -64,7 +64,27 @@ suspectes redigees par des analystes de conformite.
 Ta tache est d'extraire de maniere structuree :
 1. Toutes les entites mentionnees (personnes physiques et morales)
 2. Les details de la ou des transactions
-3. Les indicateurs de risque apparents
+3. Les indicateurs de risque apparents, y compris les indicateurs structurels suivants
+
+Pour chacun des indicateurs structurels ci-dessous, renseigne le champ booleen
+correspondant dans "transaction". Mets true uniquement si l'indicateur est
+explicitement ou implicitement etabli par le texte de l'analyste ; sinon, mets false.
+
+- structuring_below_threshold : la description mentionne des paiements fractionnes
+  ou structures pour rester juste sous un seuil de declaration reglementaire
+  (structuration / smurfing) -- par exemple plusieurs montants legerement
+  inferieurs a un seuil connu, ou des versements repetes calibres pour eviter
+  un controle.
+- multiple_transactions_same_beneficiary : plusieurs transactions distinctes,
+  rapprochees dans le temps, vers le meme beneficiaire.
+- no_commercial_justification : aucune facture, contrat ou piece justificative
+  commerciale n'accompagne la transaction.
+- weak_aml_destination : le pays destinataire est reconnu pour des controles
+  LBA/FT faibles ou une faible cooperation internationale (au-dela de la simple
+  liste GAFI haut risque -- inclut juridictions offshore opaques, secret
+  bancaire fort, faible transparence des beneficiaires effectifs).
+- activity_inconsistency : incoherence entre l'activite commerciale declaree
+  du client et la nature, le volume ou la frequence des transactions observees.
 
 Reponds UNIQUEMENT en JSON valide. Aucun texte avant ou apres le JSON.
 Aucune balise markdown. Uniquement le JSON brut.
@@ -90,6 +110,11 @@ Format de reponse requis :
     "receiver": { "name": "string", "entity_type": "company", "country": "string or null" },
     "intermediaries": [],
     "no_prior_relationship": true,
+    "structuring_below_threshold": false,
+    "multiple_transactions_same_beneficiary": false,
+    "no_commercial_justification": false,
+    "weak_aml_destination": false,
+    "activity_inconsistency": false,
     "red_flags": ["string"]
   },
   "initial_red_flags": ["string"]
@@ -103,7 +128,12 @@ Description de l'analyste :
 
 Institution declarante : {reporting_institution}
 
-Extrait toutes les personnes, societes, montants, dates, pays, intermediaires et indicateurs de risque."""
+Extrait toutes les personnes, societes, montants, dates, pays, intermediaires et
+indicateurs de risque. Examine en particulier si la description revele une
+structuration de paiements sous un seuil de declaration, des transactions
+repetees vers le meme beneficiaire, une absence de facture ou de contrat,
+une destination a controles LBA/FT faibles, ou une incoherence entre
+l'activite declaree du client et la transaction observee."""
 
 NARRATIVE_GENERATION_SYSTEM: str = """
 Tu es un expert en conformite bancaire tunisienne. Tu rediges des declarations
@@ -224,6 +254,34 @@ def _assess_risk(tx: dict, sanctions: dict) -> tuple[list[str], float, str]:
     if tx.get("no_prior_relationship"):
         indicators.append("Aucune relation commerciale anterieure avec le beneficiaire")
         weight += 0.15
+
+    if tx.get("structuring_below_threshold"):
+        indicators.append(
+            "Paiements fractionnes sous le seuil de declaration (structuration / smurfing)"
+        )
+        weight += 0.35
+
+    if tx.get("multiple_transactions_same_beneficiary"):
+        indicators.append(
+            "Transactions multiples sur une courte periode vers le meme beneficiaire"
+        )
+        weight += 0.20
+
+    if tx.get("no_commercial_justification"):
+        indicators.append("Absence de facture, contrat ou justification commerciale")
+        weight += 0.20
+
+    if tx.get("weak_aml_destination"):
+        indicators.append(
+            "Juridiction destinataire reconnue pour des controles LBA/FT faibles"
+        )
+        weight += 0.25
+
+    if tx.get("activity_inconsistency"):
+        indicators.append(
+            "Incoherence entre l'activite commerciale declaree et la transaction observee"
+        )
+        weight += 0.20
 
     confidence = min(weight, 1.0)
     if confidence >= 0.6:
