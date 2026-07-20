@@ -47,10 +47,29 @@ st.caption("Systeme d'aide a la redaction de declarations de soupcon goAML pour 
 with st.sidebar:
     st.header("Informations de la declaration")
 
+    secteur_label = st.radio(
+        "Secteur",
+        options=["Banque", "Assurance"],
+        horizontal=True,
+    )
+    sector = "banque" if secteur_label == "Banque" else "assurance"
+
+    if sector == "assurance":
+        st.info(
+            "Exemples de scenarios assurance :\n"
+            "- Souscription d'un contrat vie avec prime payee en especes "
+            "par un tiers sans lien avec le souscripteur\n"
+            "- Rachat total peu apres la souscription malgre des "
+            "penalites de sortie anticipee\n"
+            "- Changements frequents de beneficiaires vers des personnes "
+            "hors du cercle familial\n"
+            "- Contrats multiples lies au meme beneficiaire effectif"
+        )
+
     institution = st.text_input(
         "Nom de l'institution",
         value="",
-        placeholder="Ex: BH Bank",
+        placeholder="Ex: BH Bank" if sector == "banque" else "Ex: Assurances Salim",
     )
     analyst_id = st.text_input(
         "Identifiant analyste",
@@ -102,6 +121,7 @@ if analyse_btn:
                     "reporting_institution": institution,
                     "analyst_id": analyst_id,
                     "case_reference": case_reference or None,
+                    "sector": sector,
                 }
                 response = httpx.post(
                     f"{API_BASE_URL}/v1/str/draft",

@@ -75,7 +75,11 @@ async def draft_str(
     """Accept a French-language description and return a goAML STR draft."""
     case_id = str(uuid.uuid4())
     log = logger.bind(case_id=case_id, analyst_id=request.analyst_id)
-    log.info("str_draft_request_received", institution=request.reporting_institution)
+    log.info(
+        "str_draft_request_received",
+        institution=request.reporting_institution,
+        sector=request.sector,
+    )
 
     start_ms = int(time.time() * 1000)
 

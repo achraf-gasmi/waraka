@@ -52,6 +52,7 @@ def run_analysis(
     institution: str,
     analyst_id: str,
     case_reference: str,
+    sector: str = "banque",
 ) -> Optional[dict]:
     """Run the real Waraka pipeline (run_str_graph) and adapt its output for the UI."""
     case_id = str(uuid.uuid4())
@@ -63,6 +64,7 @@ def run_analysis(
         "analyst_id": analyst_id,
         "case_reference": full_case_ref,
         "case_id": case_id,
+        "sector": sector,
     }
 
     start = datetime.now(timezone.utc)
@@ -193,10 +195,29 @@ with st.sidebar:
     st.markdown("### 📋 Informations de la déclaration")
     st.markdown("")
 
+    secteur_label = st.radio(
+        "Secteur",
+        options=["Banque", "Assurance"],
+        horizontal=True,
+    )
+    sector = "banque" if secteur_label == "Banque" else "assurance"
+
+    if sector == "assurance":
+        st.info(
+            "**Exemples de scénarios assurance :**\n"
+            "- Souscription d'un contrat vie avec prime payée en espèces "
+            "par un tiers sans lien avec le souscripteur\n"
+            "- Rachat total peu après la souscription malgré des "
+            "pénalités de sortie anticipée\n"
+            "- Changements fréquents de bénéficiaires vers des personnes "
+            "hors du cercle familial\n"
+            "- Contrats multiples liés au même bénéficiaire effectif"
+        )
+
     institution = st.text_input(
         "Institution déclarante *",
         value="",
-        placeholder="Ex : BH Bank",
+        placeholder="Ex : BH Bank" if sector == "banque" else "Ex : Assurances Salim",
     )
     analyst_id = st.text_input(
         "Identifiant analyste *",
@@ -257,6 +278,7 @@ if generer_btn:
                 institution.strip(),
                 analyst_id.strip(),
                 case_reference.strip(),
+                sector,
             )
         if result is not None:
             st.session_state["result"] = result

@@ -39,24 +39,32 @@ Takes plain French descriptions of suspicious transactions and produces goAML-co
 
 ```
 waraka/
-├── agents/str_agent.py       # Prompts (module-level constants) + LLM helper
+├── agents/
+│   ├── str_agent.py           # Banking prompts (module-level constants) + LLM helper
+│   └── insurance_prompts.py   # Insurance prompts + InsuranceCase parsing
 ├── tools/
 │   ├── goaml_tool.py         # goAML XML builder (xml.etree.ElementTree only)
 │   ├── sanctions_tool.py     # OpenSanctions API wrapper
 │   └── ner_tool.py           # Entity extraction / JSON parsing helper
-├── graph/str_graph.py        # LangGraph StateGraph -- 5 nodes, linear
-├── models/schemas.py         # All Pydantic models (source of truth)
+├── graph/
+│   ├── str_graph.py           # LangGraph StateGraph -- 5 nodes, linear
+│   └── rules_insurance.py     # Insurance risk rule registry + scorer
+├── models/
+│   ├── schemas.py             # Banking Pydantic models (source of truth)
+│   └── schemas_insurance.py   # InsuranceCase Pydantic model
 ├── api/main.py               # FastAPI -- 3 endpoints
-├── ui/app.py                 # Streamlit analyst interface
+├── ui/app.py                 # Streamlit analyst interface (banque / assurance)
 ├── db/
 │   ├── init.sql              # PostgreSQL schema
 │   └── session.py            # SQLAlchemy async session
 ├── tests/
-│   ├── conftest.py           # Fixtures and mock data
-│   ├── test_str_agent.py     # Agent + graph tests
-│   ├── test_goaml_tool.py    # XML builder tests
-│   ├── test_ner_tool.py      # Entity parsing tests
-│   └── test_sanctions_tool.py# Sanctions wrapper tests
+│   ├── conftest.py                  # Fixtures and mock data
+│   ├── test_str_agent.py            # Agent + graph tests (banking)
+│   ├── test_goaml_tool.py           # XML builder tests
+│   ├── test_ner_tool.py             # Entity parsing tests
+│   ├── test_sanctions_tool.py       # Sanctions wrapper tests
+│   ├── test_insurance_rules.py      # Insurance rule registry + scoring tests
+│   └── test_insurance_extraction.py # Insurance extraction pipeline tests
 ├── docker-compose.yml
 ├── pyproject.toml
 └── .env.example
@@ -97,7 +105,7 @@ pip install -e ".[dev]"
 
 ```bash
 pytest tests/
-# 38 tests pass without API key (1 live test skipped)
+# 54 tests pass without API key (1 live test skipped)
 # Set ANTHROPIC_API_KEY to run live integration test
 ```
 
@@ -129,9 +137,13 @@ Draft a Suspicious Transaction Report.
   "analyst_input": "Description en francais de la transaction suspecte...",
   "reporting_institution": "BH Bank",
   "analyst_id": "ANA-001",
-  "case_reference": "CAS-2026-001"
+  "case_reference": "CAS-2026-001",
+  "sector": "banque"
 }
 ```
+
+`sector` is `"banque"` (default) or `"assurance"` -- see
+[Insurance mode](#insurance-mode) below.
 
 **Response:** `STRDraftResult` with risk level, entities, narrative, and goAML XML.
 
@@ -221,6 +233,58 @@ CRITICAL >= 0.6 | HIGH >= 0.4 | MEDIUM >= 0.2 | LOW < 0.2
 - **Key circulaire:** BCT n° 2025-17 (22 decembre 2025) -- mandate goAML filing
 - **Regulator:** CTAF (Commission Tunisienne des Analyses Financieres)
 - **FIU platform:** goAML (UNODC)
+
+---
+
+## Insurance mode
+
+Waraka also drafts STRs for insurance operations, alongside the default
+banking mode. Set `"sector": "assurance"` on `STRDraftRequest` (or pick
+"Assurance" in the UI sector selector) to route a case through the
+insurance-specific extraction prompt and rule registry instead of the
+banking ones.
+
+### Lifecycle-phase taxonomy
+
+Insurance-mode risk indicators are organized around the policy lifecycle
+rather than around a single transaction, since suspicious activity in
+insurance typically surfaces across several linked operations over time:
+
+| Phase | Focus | Example indicators |
+|---|---|---|
+| KYC / onboarding | Client and beneficial-owner screening | Sanctions hit, PEP, shell company, high-risk jurisdiction |
+| Souscription | Underwriting / policy purchase | Premium/income mismatch, product/profile mismatch, exit-focused behaviour |
+| Paiement de la prime | Premium payment | Cash above threshold, unrelated third-party payer, multi-currency cash |
+| Vie du contrat | Endorsements, advances, transfers | Frequent beneficiary changes, repeated policy advances, costly early transfer |
+| Rachat / indemnisation | Surrender / claims payout | Early surrender, surrender above threshold, claim paid to unrelated party |
+| Controle | Ongoing monitoring | Linked multiple contracts, same beneficial owner across contracts |
+
+This taxonomy (`graph/rules_insurance.py`, 29 indicators) is derived from
+public international typologies:
+
+- FATF, "Guidance for a Risk-Based Approach: Life Insurance Sector" (2018)
+- IAIS, Insurance Core Principle 22 (AML/CFT)
+
+Monetary thresholds (cash premium, surrender amount, high capital, etc.)
+are never hardcoded in the rules -- they live in a `JurisdictionConfig`
+dataclass (defaults calibrated for Tunisia/CTAF) so the same registry
+serves any insurer in any market.
+
+### Scoring
+
+Identical capped-weight-sum contract as banking mode: matched rule weights
+are summed and capped at 1.0.
+
+CRITICAL >= 0.6 | HIGH >= 0.4 | MEDIUM >= 0.2 | LOW < 0.2
+
+### Parties
+
+An `InsuranceCase` (`models/schemas_insurance.py`) tracks up to five
+parties per operation: souscripteur (policyholder, required), assure
+(insured, if different), beneficiaires (list), payeur (premium payer, if
+different), and intermediaire (broker/agent). All five are screened
+against OpenSanctions; a hit sets `sanctions_list_hit=True` on the case
+before risk scoring runs.
 
 ---
 

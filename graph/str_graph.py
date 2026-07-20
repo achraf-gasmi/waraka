@@ -7,6 +7,12 @@ from typing import Annotated, TypedDict, Optional
 import structlog
 from langgraph.graph import StateGraph, END
 
+from agents.insurance_prompts import (
+    INSURANCE_EXTRACTION_SYSTEM,
+    INSURANCE_EXTRACTION_USER,
+    INSURANCE_EXTRACTION_TOOL,
+    parse_insurance_case,
+)
 from agents.str_agent import (
     ENTITY_EXTRACTION_SYSTEM,
     ENTITY_EXTRACTION_USER,
@@ -15,6 +21,7 @@ from agents.str_agent import (
     call_llm,
     call_llm_structured,
 )
+from graph.rules_insurance import score_insurance_case
 from models.schemas import Entity, Transaction, RiskLevel
 from tools.goaml_tool import build_str_xml
 from tools.ner_tool import (
@@ -129,11 +136,59 @@ class STRState(TypedDict):
 # ---------------------------------------------------------------------------
 
 def extract_entities_node(state: STRState) -> dict:
-    """Extract entities and transaction from analyst free text via Claude tool_use."""
+    """Extract entities and transaction/case from analyst free text via Claude tool_use."""
     request = state["request"]
     case_id = request.get("case_id", "unknown")
+    sector = request.get("sector", "banque")
     log = logger.bind(case_id=case_id, node="extract_entities")
-    log.info("node_start")
+    log.info("node_start", sector=sector)
+
+    if sector == "assurance":
+        user_prompt = INSURANCE_EXTRACTION_USER.format(
+            analyst_input=request.get("analyst_input", ""),
+            reporting_institution=request.get("reporting_institution", ""),
+        )
+
+        data = call_llm_structured(
+            system=INSURANCE_EXTRACTION_SYSTEM,
+            user=user_prompt,
+            case_id=case_id,
+            tool=INSURANCE_EXTRACTION_TOOL,
+            tool_name="extract_insurance_case",
+        )
+
+        if not data:
+            log.error("extraction_llm_failed")
+            return {
+                "errors": ["LLM extraction failed"],
+                "extracted_entities": [],
+                "extracted_transaction": {},
+            }
+
+        case = parse_insurance_case(data, case_id)
+        if not case:
+            log.error("insurance_case_parse_failed")
+            return {
+                "errors": ["Insurance case parsing failed"],
+                "extracted_entities": [],
+                "extracted_transaction": {},
+            }
+
+        parties: list[Entity] = [case.souscripteur]
+        if case.assure:
+            parties.append(case.assure)
+        parties.extend(case.beneficiaires)
+        if case.payeur:
+            parties.append(case.payeur)
+        if case.intermediaire:
+            parties.append(case.intermediaire)
+
+        result: dict = {
+            "extracted_entities": [p.model_dump() for p in parties],
+            "extracted_transaction": case.model_dump(mode="json"),
+        }
+        log.info("node_complete", entity_count=len(parties), has_transaction=True)
+        return result
 
     user_prompt = ENTITY_EXTRACTION_USER.format(
         analyst_input=request.get("analyst_input", ""),
@@ -176,8 +231,10 @@ def extract_entities_node(state: STRState) -> dict:
 # ---------------------------------------------------------------------------
 
 async def screen_sanctions_node(state: STRState) -> dict:
-    """Screen all extracted entities against OpenSanctions in parallel."""
-    case_id = state["request"].get("case_id", "unknown")
+    """Screen all extracted entities (or insurance parties) against OpenSanctions in parallel."""
+    request = state["request"]
+    case_id = request.get("case_id", "unknown")
+    sector = request.get("sector", "banque")
     log = logger.bind(case_id=case_id, node="screen_sanctions")
     log.info("node_start")
 
@@ -205,6 +262,12 @@ async def screen_sanctions_node(state: STRState) -> dict:
         }
         if hits:
             partial["analyst_notes"] = [f"SANCTIONS HIT: {name}" for name in hits]
+            if sector == "assurance":
+                # Set sanctions_list_hit on the case dict before assess_risk_node
+                # (next in the graph) scores it via score_insurance_case().
+                case_dict = dict(state.get("extracted_transaction", {}))
+                case_dict["sanctions_list_hit"] = True
+                partial["extracted_transaction"] = case_dict
         return partial
 
     except Exception as exc:
@@ -221,9 +284,26 @@ async def screen_sanctions_node(state: STRState) -> dict:
 
 def assess_risk_node(state: STRState) -> dict:
     """Apply rule-based risk scoring to produce risk indicators and confidence."""
-    case_id = state["request"].get("case_id", "unknown")
+    request = state["request"]
+    case_id = request.get("case_id", "unknown")
+    sector = request.get("sector", "banque")
     log = logger.bind(case_id=case_id, node="assess_risk")
     log.info("node_start")
+
+    if sector == "assurance":
+        case: dict = state.get("extracted_transaction", {})
+        matched_labels, severity, risk_level = score_insurance_case(case)
+        log.info(
+            "node_complete",
+            risk_level=risk_level,
+            confidence=severity,
+            indicator_count=len(matched_labels),
+        )
+        return {
+            "risk_indicators": matched_labels,
+            "confidence": severity,
+            "risk_level": risk_level,
+        }
 
     tx: dict = state.get("extracted_transaction", {})
     sanctions: dict = state.get("sanctions_results", {})
@@ -348,6 +428,33 @@ def _summarize_transaction(tx: dict) -> str:
     return "\n".join(lines)
 
 
+def _summarize_insurance_case(case: dict) -> str:
+    if not case:
+        return "Aucune operation extraite"
+    souscripteur = case.get("souscripteur") or {}
+    lines = [
+        f"Type d'operation: {case.get('operation_type', 'N/A')}",
+        f"Produit: {case.get('product_type', 'N/A')} (classe de risque: {case.get('product_risk_class', 'N/A')})",
+        f"Capital assure: {case.get('sum_assured') or 'N/A'} {case.get('currency', 'TND')}",
+        f"Montant de l'operation: {case.get('amount') or 'N/A'} {case.get('currency', 'TND')}",
+        f"Souscripteur: {souscripteur.get('name', 'N/A')} ({souscripteur.get('country', 'N/A')})",
+    ]
+    assure = case.get("assure")
+    if assure:
+        lines.append(f"Assure: {assure.get('name', 'N/A')}")
+    payeur = case.get("payeur")
+    if payeur:
+        lines.append(f"Payeur de la prime: {payeur.get('name', 'N/A')}")
+    beneficiaires = case.get("beneficiaires") or []
+    if beneficiaires:
+        names = ", ".join(b.get("name", "N/A") for b in beneficiaires)
+        lines.append(f"Beneficiaires: {names}")
+    intermediaire = case.get("intermediaire")
+    if intermediaire:
+        lines.append(f"Intermediaire: {intermediaire.get('name', 'N/A')}")
+    return "\n".join(lines)
+
+
 def _summarize_sanctions(sanctions: dict) -> str:
     if not sanctions:
         return "Aucune verification effectuee"
@@ -363,12 +470,19 @@ def generate_narrative_node(state: STRState) -> dict:
     """Generate a formal French compliance narrative via Claude."""
     request = state["request"]
     case_id = request.get("case_id", "unknown")
+    sector = request.get("sector", "banque")
     log = logger.bind(case_id=case_id, node="generate_narrative")
     log.info("node_start")
 
+    transaction_summary = (
+        _summarize_insurance_case(state.get("extracted_transaction", {}))
+        if sector == "assurance"
+        else _summarize_transaction(state.get("extracted_transaction", {}))
+    )
+
     user_prompt = NARRATIVE_GENERATION_USER.format(
         entities_summary=_summarize_entities(state.get("extracted_entities", [])),
-        transaction_summary=_summarize_transaction(state.get("extracted_transaction", {})),
+        transaction_summary=transaction_summary,
         risk_indicators="\n".join(
             f"- {r}" for r in state.get("risk_indicators", [])
         ) or "Aucun indicateur identifie",

@@ -285,7 +285,13 @@ def _call_llm_anthropic(system: str, user: str, case_id: str) -> Optional[str]:
         return None
 
 
-def _call_llm_structured_anthropic(system: str, user: str, case_id: str) -> Optional[dict]:
+def _call_llm_structured_anthropic(
+    system: str,
+    user: str,
+    case_id: str,
+    tool: dict = EXTRACTION_TOOL,
+    tool_name: str = "extract_entities",
+) -> Optional[dict]:
     import anthropic
 
     log = logger.bind(case_id=case_id)
@@ -298,8 +304,8 @@ def _call_llm_structured_anthropic(system: str, user: str, case_id: str) -> Opti
             temperature=LLM_TEMPERATURE,
             system=system,
             messages=[{"role": "user", "content": user}],
-            tools=[EXTRACTION_TOOL],
-            tool_choice={"type": "tool", "name": "extract_entities"},
+            tools=[tool],
+            tool_choice={"type": "tool", "name": tool_name},
         )
         tool_block = next(
             (b for b in message.content if b.type == "tool_use"),
@@ -419,16 +425,21 @@ def call_llm_structured(
     system: str,
     user: str,
     case_id: str,
+    tool: dict = EXTRACTION_TOOL,
+    tool_name: str = "extract_entities",
 ) -> Optional[dict]:
     """Structured LLM call -- guarantees schema-validated output.
 
-    Anthropic: forces tool_use via tool_choice, returns the validated tool
-    input dict. Gemini: forces JSON-mime output and parses it.
+    Anthropic: forces tool_use via tool_choice on `tool`/`tool_name` (default
+    EXTRACTION_TOOL / "extract_entities" for banking mode; insurance mode
+    passes INSURANCE_EXTRACTION_TOOL / "extract_insurance_case"), returns the
+    validated tool input dict. Gemini: forces JSON-mime output and parses it
+    (tool/tool_name are unused there -- Gemini has no tool-schema forcing).
 
     Returns:
-        Parsed dict matching EXTRACTION_TOOL's input_schema, or None on failure.
+        Parsed dict matching the tool's input_schema, or None on failure.
     """
     provider = os.environ.get("LLM_PROVIDER", "anthropic").lower()
     if provider == "gemini":
         return _call_llm_structured_gemini(system, user, case_id)
-    return _call_llm_structured_anthropic(system, user, case_id)
+    return _call_llm_structured_anthropic(system, user, case_id, tool=tool, tool_name=tool_name)

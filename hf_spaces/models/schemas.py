@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Literal, Optional
 
 
 class RiskLevel(str, Enum):
@@ -53,9 +53,10 @@ class Transaction(BaseModel):
 
 class STRDraftRequest(BaseModel):
     analyst_input: str          # Free French text describing the suspicious case
-    reporting_institution: str  # Bank name
+    reporting_institution: str  # Bank / insurer name
     analyst_id: str
     case_reference: Optional[str] = None
+    sector: Literal["banque", "assurance"] = "banque"
 
 
 class STRDraftResult(BaseModel):
