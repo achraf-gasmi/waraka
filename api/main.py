@@ -38,6 +38,23 @@ WARAKA_API_KEY: str = os.environ.get("WARAKA_API_KEY", "waraka-dev-key-change-in
 # Auth dependency
 # ---------------------------------------------------------------------------
 
+def _compute_sanctions_status(entities: list[Entity]) -> str:
+    """Summarize per-entity sanctions_status into an API-level signal.
+
+    Returns "all_screened" only if every entity was actually screened;
+    otherwise "partial" or "none_screened" so callers can't mistake an
+    incomplete check for a clean one.
+    """
+    if not entities:
+        return "none_screened"
+    screened = sum(1 for e in entities if e.sanctions_status == "screened")
+    if screened == len(entities):
+        return "all_screened"
+    if screened == 0:
+        return "none_screened"
+    return "partial"
+
+
 def verify_api_key(authorization: Optional[str] = Header(default=None)) -> None:
     """Verify Bearer token matches WARAKA_API_KEY."""
     if not authorization or not authorization.startswith("Bearer "):
@@ -130,6 +147,7 @@ async def draft_str(
         narrative_fr=final_state.get("narrative_fr", ""),
         goaml_xml=final_state.get("goaml_xml", ""),
         sanctions_checked=bool(final_state.get("sanctions_results")),
+        sanctions_status=_compute_sanctions_status(entities),
         analyst_notes=final_state.get("analyst_notes", []),
         latency_ms=latency_ms,
         created_at=datetime.now(timezone.utc),

@@ -15,15 +15,28 @@ REQUEST_TIMEOUT: float = 10.0
 
 
 class SanctionsResult:
-    """Result of a sanctions check for a single entity."""
+    """Result of a sanctions check for a single entity.
 
-    def __init__(self, entity_name: str, hit: bool, detail: Optional[str] = None) -> None:
+    status is one of:
+        "screened" -- the check ran successfully (hit may be True or False)
+        "skipped"  -- no OPENSANCTIONS_API_KEY configured, check did not run
+        "failed"   -- timeout or HTTP/unexpected error, check did not complete
+    """
+
+    def __init__(
+        self,
+        entity_name: str,
+        hit: bool,
+        detail: Optional[str] = None,
+        status: str = "screened",
+    ) -> None:
         self.entity_name: str = entity_name
         self.hit: bool = hit
         self.detail: Optional[str] = detail
+        self.status: str = status
 
     def to_dict(self) -> dict:
-        return {"hit": self.hit, "detail": self.detail}
+        return {"hit": self.hit, "detail": self.detail, "status": self.status}
 
 
 def screen_entity(entity_name: str, case_id: str) -> SanctionsResult:
@@ -40,7 +53,7 @@ def screen_entity(entity_name: str, case_id: str) -> SanctionsResult:
 
     if not OPENSANCTIONS_API_KEY:
         log.warning("sanctions_api_key_missing", action="skipping_screen")
-        return SanctionsResult(entity_name=entity_name, hit=False, detail=None)
+        return SanctionsResult(entity_name=entity_name, hit=False, detail=None, status="skipped")
 
     payload = {
         "queries": {
@@ -76,20 +89,20 @@ def screen_entity(entity_name: str, case_id: str) -> SanctionsResult:
                     f"(score: {score:.2f})"
                 )
                 log.info("sanctions_hit", score=score, datasets=datasets)
-                return SanctionsResult(entity_name=entity_name, hit=True, detail=detail)
+                return SanctionsResult(entity_name=entity_name, hit=True, detail=detail, status="screened")
 
         log.info("sanctions_clear")
-        return SanctionsResult(entity_name=entity_name, hit=False, detail=None)
+        return SanctionsResult(entity_name=entity_name, hit=False, detail=None, status="screened")
 
     except httpx.TimeoutException:
         log.error("sanctions_timeout")
-        return SanctionsResult(entity_name=entity_name, hit=False, detail=None)
+        return SanctionsResult(entity_name=entity_name, hit=False, detail=None, status="failed")
     except httpx.HTTPStatusError as exc:
         log.error("sanctions_http_error", status=exc.response.status_code)
-        return SanctionsResult(entity_name=entity_name, hit=False, detail=None)
+        return SanctionsResult(entity_name=entity_name, hit=False, detail=None, status="failed")
     except Exception as exc:
         log.error("sanctions_unexpected_error", error=str(exc))
-        return SanctionsResult(entity_name=entity_name, hit=False, detail=None)
+        return SanctionsResult(entity_name=entity_name, hit=False, detail=None, status="failed")
 
 
 def screen_entities(
@@ -98,7 +111,7 @@ def screen_entities(
     """Screen multiple entity names against OpenSanctions (sequential, sync).
 
     Returns:
-        Dict mapping entity_name -> {"hit": bool, "detail": str | None}
+        Dict mapping entity_name -> {"hit": bool, "detail": str | None, "status": str}
     """
     results: dict[str, dict] = {}
     for name in entity_names:
@@ -113,7 +126,7 @@ async def screen_entity_async(entity_name: str, case_id: str) -> SanctionsResult
 
     if not OPENSANCTIONS_API_KEY:
         log.warning("sanctions_api_key_missing", action="skipping_screen")
-        return SanctionsResult(entity_name=entity_name, hit=False, detail=None)
+        return SanctionsResult(entity_name=entity_name, hit=False, detail=None, status="skipped")
 
     payload = {
         "queries": {
@@ -148,20 +161,20 @@ async def screen_entity_async(entity_name: str, case_id: str) -> SanctionsResult
                     f"(score: {score:.2f})"
                 )
                 log.info("sanctions_hit", score=score, datasets=datasets)
-                return SanctionsResult(entity_name=entity_name, hit=True, detail=detail)
+                return SanctionsResult(entity_name=entity_name, hit=True, detail=detail, status="screened")
 
         log.info("sanctions_clear")
-        return SanctionsResult(entity_name=entity_name, hit=False, detail=None)
+        return SanctionsResult(entity_name=entity_name, hit=False, detail=None, status="screened")
 
     except httpx.TimeoutException:
         log.error("sanctions_timeout")
-        return SanctionsResult(entity_name=entity_name, hit=False, detail=None)
+        return SanctionsResult(entity_name=entity_name, hit=False, detail=None, status="failed")
     except httpx.HTTPStatusError as exc:
         log.error("sanctions_http_error", status=exc.response.status_code)
-        return SanctionsResult(entity_name=entity_name, hit=False, detail=None)
+        return SanctionsResult(entity_name=entity_name, hit=False, detail=None, status="failed")
     except Exception as exc:
         log.error("sanctions_unexpected_error", error=str(exc))
-        return SanctionsResult(entity_name=entity_name, hit=False, detail=None)
+        return SanctionsResult(entity_name=entity_name, hit=False, detail=None, status="failed")
 
 
 async def screen_entities_async(
@@ -170,7 +183,7 @@ async def screen_entities_async(
     """Screen all entities in parallel using asyncio.gather.
 
     Returns:
-        Dict mapping entity_name -> {"hit": bool, "detail": str | None}
+        Dict mapping entity_name -> {"hit": bool, "detail": str | None, "status": str}
     """
     results_list: list[SanctionsResult] = await asyncio.gather(
         *[screen_entity_async(name, case_id) for name in entity_names]

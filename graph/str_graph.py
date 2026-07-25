@@ -290,22 +290,50 @@ async def screen_sanctions_node(state: STRState) -> dict:
         updated = apply_sanctions_to_entities(entities, results)
 
         hits = [name for name, r in results.items() if r.get("hit")]
-        log.info("node_complete", screened=len(entity_names), hits=len(hits))
+        incomplete = [
+            (name, r.get("status"))
+            for name, r in results.items()
+            if r.get("status") in ("failed", "skipped")
+        ]
+        log.info(
+            "node_complete",
+            screened=len(entity_names),
+            hits=len(hits),
+            incomplete=len(incomplete),
+        )
         if hits:
             log.warning("sanctions_hits_found", hits=hits)
+        if incomplete:
+            log.warning("sanctions_incomplete", incomplete=[n for n, _ in incomplete])
 
         partial: dict = {
             "sanctions_results": results,
             "extracted_entities": [e.model_dump() for e in updated],
         }
+
+        notes: list[str] = []
         if hits:
-            partial["analyst_notes"] = [f"SANCTIONS HIT: {name}" for name in hits]
-            if sector == "assurance":
-                # Set sanctions_list_hit on the case dict before assess_risk_node
-                # (next in the graph) scores it via score_insurance_case().
-                case_dict = dict(state.get("extracted_transaction", {}))
-                case_dict["sanctions_list_hit"] = True
-                partial["extracted_transaction"] = case_dict
+            notes.extend(f"SANCTIONS HIT: {name}" for name in hits)
+        for name, entity_status in incomplete:
+            if entity_status == "skipped":
+                notes.append(
+                    f"Verification sanctions NON EFFECTUEE pour {name} "
+                    "(cle API OpenSanctions absente) -- verification manuelle obligatoire"
+                )
+            else:  # "failed"
+                notes.append(
+                    f"Verification sanctions EN ECHEC pour {name} "
+                    "(timeout ou erreur du service OpenSanctions) -- verification manuelle obligatoire"
+                )
+        if notes:
+            partial["analyst_notes"] = notes
+
+        if hits and sector == "assurance":
+            # Set sanctions_list_hit on the case dict before assess_risk_node
+            # (next in the graph) scores it via score_insurance_case().
+            case_dict = dict(state.get("extracted_transaction", {}))
+            case_dict["sanctions_list_hit"] = True
+            partial["extracted_transaction"] = case_dict
         return partial
 
     except Exception as exc:

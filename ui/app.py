@@ -148,6 +148,19 @@ if "result" in st.session_state:
     result: dict = st.session_state["result"]
 
     st.divider()
+
+    sanctions_status = result.get("sanctions_status", "all_screened")
+    if sanctions_status != "all_screened":
+        st.error(
+            "🛑 **VERIFICATION SANCTIONS INCOMPLETE — verification manuelle requise.**\n\n"
+            f"Statut du filtrage sanctions : `{sanctions_status}`. Une ou plusieurs entites "
+            "n'ont PAS ete verifiees automatiquement contre les listes de sanctions "
+            "(cle API OpenSanctions absente, ou timeout/erreur du service). "
+            "Ce dossier ne doit **pas** etre traite comme 'verifie et propre' -- "
+            "un analyste doit verifier manuellement les entites concernees avant soumission.",
+            icon="🛑",
+        )
+
     tab1, tab2, tab3, tab4 = st.tabs(
         ["Résumé", "Récit", "XML goAML", "Validation"]
     )

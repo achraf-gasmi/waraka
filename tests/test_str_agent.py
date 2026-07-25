@@ -14,10 +14,13 @@ from tests.conftest import (
     EXPECTED_RISK_INDICATORS_MIN,
     EXPECTED_ENTITY_COUNT,
     MOCK_SANCTIONS_RESPONSE_CLEAN,
+    MOCK_SANCTIONS_RESPONSE_SKIPPED,
+    MOCK_SANCTIONS_RESPONSE_TIMEOUT,
 )
 from graph.str_graph import run_str_graph, assess_risk_node, STRState
 from tools.goaml_tool import validate_str_xml
-from models.schemas import RiskLevel
+from models.schemas import RiskLevel, Entity
+from api.main import _compute_sanctions_status
 import uuid
 
 
@@ -235,6 +238,76 @@ class TestFullPipelineMocked:
 
         assert "SANCTIONS HIT: Gulf Properties FZE" in final_state.get("analyst_notes", [])
         assert final_state["confidence"] >= 0.85
+
+    async def test_missing_api_key_produces_distinct_analyst_notes_and_incomplete_status(self):
+        """When OPENSANCTIONS_API_KEY is missing, entities come back status='skipped'.
+
+        The pipeline must emit a distinct per-entity analyst note (not the generic
+        catastrophic-failure line), and the resulting entities must NOT be reported
+        as sanctions_status='all_screened' at the API layer.
+        """
+        with (
+            patch("graph.str_graph.call_llm_structured", return_value=MOCK_ENTITY_EXTRACTION_DATA),
+            patch("graph.str_graph.call_llm", return_value=MOCK_NARRATIVE),
+            patch(
+                "graph.str_graph.screen_entities_async",
+                new=AsyncMock(return_value=MOCK_SANCTIONS_RESPONSE_SKIPPED),
+            ),
+        ):
+            final_state = await run_str_graph(_make_request_dict())
+
+        entities = [Entity(**e) for e in final_state["extracted_entities"]]
+        assert all(e.sanctions_status == "skipped" for e in entities)
+
+        notes = final_state.get("analyst_notes", [])
+        assert any("NON EFFECTUEE" in n for n in notes)
+        assert "Verification sanctions echouee -- verifier manuellement" not in notes
+
+        sanctions_status = _compute_sanctions_status(entities)
+        assert sanctions_status != "all_screened"
+        assert sanctions_status == "none_screened"
+
+    async def test_timeout_produces_distinct_analyst_notes_and_incomplete_status(self):
+        """When sanctions checks time out, entities come back status='failed'.
+
+        Same fail-closed guarantee as the missing-API-key case: distinct notes,
+        and sanctions_status must not read as 'all_screened'.
+        """
+        with (
+            patch("graph.str_graph.call_llm_structured", return_value=MOCK_ENTITY_EXTRACTION_DATA),
+            patch("graph.str_graph.call_llm", return_value=MOCK_NARRATIVE),
+            patch(
+                "graph.str_graph.screen_entities_async",
+                new=AsyncMock(return_value=MOCK_SANCTIONS_RESPONSE_TIMEOUT),
+            ),
+        ):
+            final_state = await run_str_graph(_make_request_dict())
+
+        entities = [Entity(**e) for e in final_state["extracted_entities"]]
+        assert all(e.sanctions_status == "failed" for e in entities)
+
+        notes = final_state.get("analyst_notes", [])
+        assert any("EN ECHEC" in n for n in notes)
+        assert "Verification sanctions echouee -- verifier manuellement" not in notes
+
+        sanctions_status = _compute_sanctions_status(entities)
+        assert sanctions_status != "all_screened"
+        assert sanctions_status == "none_screened"
+
+    async def test_all_screened_when_every_entity_screened_clean(self):
+        """Sanity check: a fully successful screen does read as 'all_screened'."""
+        with (
+            patch("graph.str_graph.call_llm_structured", return_value=MOCK_ENTITY_EXTRACTION_DATA),
+            patch("graph.str_graph.call_llm", return_value=MOCK_NARRATIVE),
+            patch(
+                "graph.str_graph.screen_entities_async",
+                new=AsyncMock(return_value=MOCK_SANCTIONS_RESPONSE_CLEAN),
+            ),
+        ):
+            final_state = await run_str_graph(_make_request_dict())
+
+        entities = [Entity(**e) for e in final_state["extracted_entities"]]
+        assert _compute_sanctions_status(entities) == "all_screened"
 
     async def test_llm_failure_does_not_crash_pipeline(self):
         """If LLM returns None, pipeline completes with error notes."""

@@ -30,6 +30,7 @@ class Entity(BaseModel):
     is_pep: bool = False
     sanctions_hit: bool = False
     sanctions_detail: Optional[str] = None
+    sanctions_status: Optional[str] = None  # "screened" | "skipped" | "failed" | None (not yet screened)
 
 
 class Transaction(BaseModel):
@@ -69,6 +70,7 @@ class STRDraftResult(BaseModel):
     narrative_fr: str                   # Human-readable French narrative
     goaml_xml: str                      # Valid goAML STR XML string
     sanctions_checked: bool
+    sanctions_status: str                # "all_screened" | "partial" | "none_screened"
     analyst_notes: list[str]            # What the agent flagged for human review
     latency_ms: int
     created_at: datetime
