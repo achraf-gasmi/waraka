@@ -148,6 +148,19 @@ if "result" in st.session_state:
     result: dict = st.session_state["result"]
 
     st.divider()
+
+    sanctions_status = result.get("sanctions_status", "all_screened")
+    if sanctions_status != "all_screened":
+        st.error(
+            "🛑 **VÉRIFICATION SANCTIONS INCOMPLETE — vérification manuelle requise.**\n\n"
+            f"Statut du filtrage sanctions : `{sanctions_status}`. Une ou plusieurs entites "
+            "n'ont PAS ete verifiees automatiquement contre les listes de sanctions "
+            "(cle API OpenSanctions absente, ou timeout/erreur du service). "
+            "Ce dossier ne doit **pas** etre traite comme 'verifie et propre' -- "
+            "un analyste doit verifier manuellement les entites concernees avant soumission.",
+            icon="🛑",
+        )
+
     tab1, tab2, tab3, tab4 = st.tabs(
         ["Résumé", "Récit", "XML goAML", "Validation"]
     )
@@ -157,7 +170,7 @@ if "result" in st.session_state:
         risk_raw = result.get("risk_level", "low")
         risk_label = RISK_LABELS.get(risk_raw, risk_raw.upper())
         risk_color = RISK_COLORS.get(risk_raw, "#757575")
-        confidence = result.get("confidence", 0.0)
+        risk_score = result.get("risk_score", 0.0)
 
         col1, col2 = st.columns(2)
         with col1:
@@ -168,7 +181,7 @@ if "result" in st.session_state:
                 unsafe_allow_html=True,
             )
         with col2:
-            st.metric("Score de confiance", f"{confidence:.0%}")
+            st.metric("Score de risque", f"{risk_score:.0%}")
 
         st.subheader("Entites detectees")
         entities = result.get("extracted_entities", [])

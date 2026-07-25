@@ -18,15 +18,30 @@ EXPECTED_RISK_INDICATORS_MIN: int = 3
 EXPECTED_ENTITY_COUNT: int = 4
 
 MOCK_SANCTIONS_RESPONSE_CLEAN: dict = {
-    "Immobiliere Carthage SARL": {"hit": False, "detail": None},
-    "Gulf Properties FZE": {"hit": False, "detail": None},
-    "Mediterranean Holdings Ltd": {"hit": False, "detail": None},
-    "Atlantic Capital SA": {"hit": False, "detail": None},
+    "Immobiliere Carthage SARL": {"hit": False, "detail": None, "status": "screened"},
+    "Gulf Properties FZE": {"hit": False, "detail": None, "status": "screened"},
+    "Mediterranean Holdings Ltd": {"hit": False, "detail": None, "status": "screened"},
+    "Atlantic Capital SA": {"hit": False, "detail": None, "status": "screened"},
 }
 
 MOCK_SANCTIONS_RESPONSE_HIT: dict = {
     "Gulf Properties FZE": {
         "hit": True,
         "detail": "Listed on OFAC SDN list -- designation date 2024-03-15",
+        "status": "screened",
     },
+}
+
+MOCK_SANCTIONS_RESPONSE_SKIPPED: dict = {
+    "Immobiliere Carthage SARL": {"hit": False, "detail": None, "status": "skipped"},
+    "Gulf Properties FZE": {"hit": False, "detail": None, "status": "skipped"},
+    "Mediterranean Holdings Ltd": {"hit": False, "detail": None, "status": "skipped"},
+    "Atlantic Capital SA": {"hit": False, "detail": None, "status": "skipped"},
+}
+
+MOCK_SANCTIONS_RESPONSE_TIMEOUT: dict = {
+    "Immobiliere Carthage SARL": {"hit": False, "detail": None, "status": "failed"},
+    "Gulf Properties FZE": {"hit": False, "detail": None, "status": "failed"},
+    "Mediterranean Holdings Ltd": {"hit": False, "detail": None, "status": "failed"},
+    "Atlantic Capital SA": {"hit": False, "detail": None, "status": "failed"},
 }

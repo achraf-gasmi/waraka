@@ -10,12 +10,13 @@ CASE_ID = "TEST-CASE-001"
 
 
 def test_screen_entity_no_api_key():
-    """Without API key, returns clean result and does not call API."""
+    """Without API key, returns clean result and does not call API, marked skipped."""
     with patch("tools.sanctions_tool.OPENSANCTIONS_API_KEY", ""):
         result = screen_entity("Gulf Properties FZE", CASE_ID)
     assert isinstance(result, SanctionsResult)
     assert result.hit is False
     assert result.detail is None
+    assert result.status == "skipped"
 
 
 def test_screen_entity_hit(mocker):
@@ -51,6 +52,7 @@ def test_screen_entity_hit(mocker):
     assert result.hit is True
     assert result.detail is not None
     assert "ofac_sdn" in result.detail
+    assert result.status == "screened"
 
 
 def test_screen_entity_clear(mocker):
@@ -69,10 +71,11 @@ def test_screen_entity_clear(mocker):
         result = screen_entity("Immobiliere Carthage SARL", CASE_ID)
 
     assert result.hit is False
+    assert result.status == "screened"
 
 
 def test_screen_entity_timeout(mocker):
-    """On timeout, returns clean result without raising."""
+    """On timeout, returns clean result without raising, marked failed (not screened)."""
     mocker.patch("tools.sanctions_tool.OPENSANCTIONS_API_KEY", "test-key")
 
     with patch("httpx.Client") as mock_client_cls:
@@ -83,10 +86,11 @@ def test_screen_entity_timeout(mocker):
         result = screen_entity("Some Entity", CASE_ID)
 
     assert result.hit is False
+    assert result.status == "failed"
 
 
 def test_screen_entity_http_error(mocker):
-    """On HTTP error, returns clean result without raising."""
+    """On HTTP error, returns clean result without raising, marked failed (not screened)."""
     mocker.patch("tools.sanctions_tool.OPENSANCTIONS_API_KEY", "test-key")
 
     mock_response = MagicMock()
@@ -102,6 +106,7 @@ def test_screen_entity_http_error(mocker):
         result = screen_entity("Some Entity", CASE_ID)
 
     assert result.hit is False
+    assert result.status == "failed"
 
 
 def test_screen_entities_returns_dict():
@@ -116,9 +121,16 @@ def test_screen_entities_returns_dict():
     for val in results.values():
         assert "hit" in val
         assert "detail" in val
+        assert val["status"] == "skipped"
 
 
 def test_sanctions_result_to_dict():
-    r = SanctionsResult("Test Corp", hit=True, detail="OFAC SDN match")
+    r = SanctionsResult("Test Corp", hit=True, detail="OFAC SDN match", status="screened")
     d = r.to_dict()
-    assert d == {"hit": True, "detail": "OFAC SDN match"}
+    assert d == {"hit": True, "detail": "OFAC SDN match", "status": "screened"}
+
+
+def test_sanctions_result_default_status_is_screened():
+    """status defaults to 'screened' when not explicitly set (successful check path)."""
+    r = SanctionsResult("Test Corp", hit=False, detail=None)
+    assert r.status == "screened"

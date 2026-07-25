@@ -14,10 +14,13 @@ from tests.conftest import (
     EXPECTED_RISK_INDICATORS_MIN,
     EXPECTED_ENTITY_COUNT,
     MOCK_SANCTIONS_RESPONSE_CLEAN,
+    MOCK_SANCTIONS_RESPONSE_SKIPPED,
+    MOCK_SANCTIONS_RESPONSE_TIMEOUT,
 )
 from graph.str_graph import run_str_graph, assess_risk_node, STRState
 from tools.goaml_tool import validate_str_xml
-from models.schemas import RiskLevel
+from models.schemas import RiskLevel, Entity
+from api.main import _compute_sanctions_status
 import uuid
 
 
@@ -129,7 +132,7 @@ class TestAssessRiskNode:
                 "currency": "TND",
                 "transaction_type": "virement",
                 "sender": {"name": "Carthage SARL", "entity_type": "company", "country": "TN", "is_pep": False},
-                "receiver": {"name": "Gulf Properties", "entity_type": "company", "country": "AE", "is_pep": False},
+                "receiver": {"name": "Gulf Properties", "entity_type": "company", "country": "IR", "is_pep": False},
                 "intermediaries": [
                     {"name": "Inter1", "entity_type": "company", "country": "MT"},
                     {"name": "Inter2", "entity_type": "company", "country": "LU"},
@@ -139,7 +142,7 @@ class TestAssessRiskNode:
             "sanctions_results": {},
             "risk_indicators": [],
             "risk_level": "low",
-            "confidence": 0.0,
+            "risk_score": 0.0,
             "narrative_fr": "",
             "goaml_xml": "",
             "analyst_notes": [],
@@ -151,22 +154,22 @@ class TestAssessRiskNode:
         result = assess_risk_node(state)
         assert result["risk_level"] == RiskLevel.CRITICAL.value
 
-    def test_demo_scenario_confidence_above_threshold(self):
+    def test_demo_scenario_risk_score_above_threshold(self):
         state = self._base_state()
         result = assess_risk_node(state)
-        assert result["confidence"] >= 0.6
+        assert result["risk_score"] >= 0.6
 
     def test_demo_scenario_has_4_indicators(self):
-        """R001 (AE), R002 (850k > 500k), R003 (2 intermediaries), R006 (no prior)."""
+        """R001 (IR, FATF blacklist tier, weight 0.40), R002 (850k > 500k), R003 (2 intermediaries), R006 (no prior)."""
         state = self._base_state()
         result = assess_risk_node(state)
         assert len(result["risk_indicators"]) >= 4
 
-    def test_sanctions_hit_increases_confidence(self):
+    def test_sanctions_hit_increases_risk_score(self):
         state = self._base_state()
         state["sanctions_results"] = {"Gulf Properties": {"hit": True, "detail": "OFAC"}}
         result = assess_risk_node(state)
-        assert result["confidence"] >= 0.85
+        assert result["risk_score"] >= 0.85
 
     def test_low_amount_safe_jurisdiction_is_low_risk(self):
         state = self._base_state()
@@ -177,12 +180,12 @@ class TestAssessRiskNode:
         result = assess_risk_node(state)
         assert result["risk_level"] in (RiskLevel.LOW.value, RiskLevel.MEDIUM.value)
 
-    def test_confidence_capped_at_1(self):
+    def test_risk_score_capped_at_1(self):
         state = self._base_state()
         state["sanctions_results"] = {"x": {"hit": True, "detail": "test"}}
         state["extracted_transaction"]["sender"]["is_pep"] = True
         result = assess_risk_node(state)
-        assert result["confidence"] <= 1.0
+        assert result["risk_score"] <= 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +237,77 @@ class TestFullPipelineMocked:
             final_state = await run_str_graph(_make_request_dict())
 
         assert "SANCTIONS HIT: Gulf Properties FZE" in final_state.get("analyst_notes", [])
-        assert final_state["confidence"] >= 0.85
+        assert final_state["risk_score"] >= 0.85
+
+    async def test_missing_api_key_produces_distinct_analyst_notes_and_incomplete_status(self):
+        """When OPENSANCTIONS_API_KEY is missing, entities come back status='skipped'.
+
+        The pipeline must emit a distinct per-entity analyst note (not the generic
+        catastrophic-failure line), and the resulting entities must NOT be reported
+        as sanctions_status='all_screened' at the API layer.
+        """
+        with (
+            patch("graph.str_graph.call_llm_structured", return_value=MOCK_ENTITY_EXTRACTION_DATA),
+            patch("graph.str_graph.call_llm", return_value=MOCK_NARRATIVE),
+            patch(
+                "graph.str_graph.screen_entities_async",
+                new=AsyncMock(return_value=MOCK_SANCTIONS_RESPONSE_SKIPPED),
+            ),
+        ):
+            final_state = await run_str_graph(_make_request_dict())
+
+        entities = [Entity(**e) for e in final_state["extracted_entities"]]
+        assert all(e.sanctions_status == "skipped" for e in entities)
+
+        notes = final_state.get("analyst_notes", [])
+        assert any("NON EFFECTUEE" in n for n in notes)
+        assert "Verification sanctions echouee -- verifier manuellement" not in notes
+
+        sanctions_status = _compute_sanctions_status(entities)
+        assert sanctions_status != "all_screened"
+        assert sanctions_status == "none_screened"
+
+    async def test_timeout_produces_distinct_analyst_notes_and_incomplete_status(self):
+        """When sanctions checks time out, entities come back status='failed'.
+
+        Same fail-closed guarantee as the missing-API-key case: distinct notes,
+        and sanctions_status must not read as 'all_screened'.
+        """
+        with (
+            patch("graph.str_graph.call_llm_structured", return_value=MOCK_ENTITY_EXTRACTION_DATA),
+            patch("graph.str_graph.call_llm", return_value=MOCK_NARRATIVE),
+            patch(
+                "graph.str_graph.screen_entities_async",
+                new=AsyncMock(return_value=MOCK_SANCTIONS_RESPONSE_TIMEOUT),
+            ),
+        ):
+            final_state = await run_str_graph(_make_request_dict())
+
+        entities = [Entity(**e) for e in final_state["extracted_entities"]]
+        assert all(e.sanctions_status == "failed" for e in entities)
+
+        notes = final_state.get("analyst_notes", [])
+        assert any("EN ECHEC" in n for n in notes)
+        assert "Verification sanctions echouee -- verifier manuellement" not in notes
+
+        sanctions_status = _compute_sanctions_status(entities)
+        assert sanctions_status != "all_screened"
+        assert sanctions_status == "none_screened"
+
+    async def test_all_screened_when_every_entity_screened_clean(self):
+        """Sanity check: a fully successful screen does read as 'all_screened'."""
+        with (
+            patch("graph.str_graph.call_llm_structured", return_value=MOCK_ENTITY_EXTRACTION_DATA),
+            patch("graph.str_graph.call_llm", return_value=MOCK_NARRATIVE),
+            patch(
+                "graph.str_graph.screen_entities_async",
+                new=AsyncMock(return_value=MOCK_SANCTIONS_RESPONSE_CLEAN),
+            ),
+        ):
+            final_state = await run_str_graph(_make_request_dict())
+
+        entities = [Entity(**e) for e in final_state["extracted_entities"]]
+        assert _compute_sanctions_status(entities) == "all_screened"
 
     async def test_llm_failure_does_not_crash_pipeline(self):
         """If LLM returns None, pipeline completes with error notes."""
@@ -270,7 +343,7 @@ class TestLiveIntegration:
             final_state = await run_str_graph(_make_request_dict())
 
         assert final_state["risk_level"] == EXPECTED_RISK_LEVEL
-        assert final_state["confidence"] >= 0.6
+        assert final_state["risk_score"] >= 0.6
         assert len(final_state["risk_indicators"]) >= EXPECTED_RISK_INDICATORS_MIN
         assert len(final_state["extracted_entities"]) >= EXPECTED_ENTITY_COUNT
 

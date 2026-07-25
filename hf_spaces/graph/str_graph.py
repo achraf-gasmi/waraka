@@ -1,10 +1,12 @@
 """LangGraph StateGraph for STR drafting -- 5 nodes, linear, no cycles."""
 
 import operator
-from datetime import datetime
+from datetime import date, datetime
+from pathlib import Path
 from typing import Annotated, TypedDict, Optional
 
 import structlog
+import yaml
 from langgraph.graph import StateGraph, END
 
 from agents.insurance_prompts import (
@@ -36,17 +38,53 @@ logger = structlog.get_logger()
 # Risk rules -- pure rule-based scoring, no ML in v1
 # ---------------------------------------------------------------------------
 
-HIGH_RISK_COUNTRIES: list[str] = [
-    "AE", "IR", "KP", "SY", "YE", "LY", "SD", "AF",   # FATF high-risk
-    "VE", "MM", "NI", "PA", "UG",                        # FATF grey list
-]
+_FATF_LISTS_PATH = Path(__file__).resolve().parent.parent / "config" / "fatf_lists.yaml"
+_FATF_STALE_AFTER_DAYS = 120
+
+
+def _load_fatf_country_weights(path: Path = _FATF_LISTS_PATH) -> dict[str, float]:
+    """Load the FATF blacklist/greylist config into a country -> weight lookup.
+
+    Higher-severity tiers are loaded first so a country listed in more than
+    one tier keeps the weight of its highest (most severe) tier.
+    """
+    with open(path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+
+    weights: dict[str, float] = {}
+
+    for tier in data.get("blacklist", {}).values():
+        tier_weight = tier["weight"]
+        for country in tier.get("countries", []):
+            weights.setdefault(country, tier_weight)
+
+    greylist = data.get("greylist", {})
+    grey_weight = greylist.get("weight", 0.0)
+    for country in greylist.get("countries", []):
+        weights.setdefault(country, grey_weight)
+
+    last_updated_str = data.get("last_updated")
+    if last_updated_str:
+        last_updated = datetime.strptime(last_updated_str, "%Y-%m-%d").date()
+        age_days = (date.today() - last_updated).days
+        if age_days > _FATF_STALE_AFTER_DAYS:
+            logger.warning(
+                "fatf_list_stale",
+                last_updated=last_updated_str,
+                age_days=age_days,
+            )
+
+    return weights
+
+
+FATF_COUNTRY_WEIGHTS: dict[str, float] = _load_fatf_country_weights()
 
 RISK_RULES: list[dict] = [
     {
         "id": "R001",
         "name": "Juridiction a haut risque",
-        "weight": 0.3,
-        "label": "Transaction vers une juridiction a haut risque selon le GAFI",
+        "weight": None,  # tier-dependent -- see FATF_COUNTRY_WEIGHTS (0.40 / 0.30 / 0.15)
+        "label": "Transaction vers une juridiction a haut risque selon le GAFI (poids selon palier: 0.40/0.30/0.15)",
     },
     {
         "id": "R002",
@@ -124,7 +162,7 @@ class STRState(TypedDict):
     sanctions_results: dict
     risk_indicators: list[str]
     risk_level: str
-    confidence: float
+    risk_score: float
     narrative_fr: str
     goaml_xml: str
     analyst_notes: Annotated[list[str], operator.add]
@@ -252,22 +290,50 @@ async def screen_sanctions_node(state: STRState) -> dict:
         updated = apply_sanctions_to_entities(entities, results)
 
         hits = [name for name, r in results.items() if r.get("hit")]
-        log.info("node_complete", screened=len(entity_names), hits=len(hits))
+        incomplete = [
+            (name, r.get("status"))
+            for name, r in results.items()
+            if r.get("status") in ("failed", "skipped")
+        ]
+        log.info(
+            "node_complete",
+            screened=len(entity_names),
+            hits=len(hits),
+            incomplete=len(incomplete),
+        )
         if hits:
             log.warning("sanctions_hits_found", hits=hits)
+        if incomplete:
+            log.warning("sanctions_incomplete", incomplete=[n for n, _ in incomplete])
 
         partial: dict = {
             "sanctions_results": results,
             "extracted_entities": [e.model_dump() for e in updated],
         }
+
+        notes: list[str] = []
         if hits:
-            partial["analyst_notes"] = [f"SANCTIONS HIT: {name}" for name in hits]
-            if sector == "assurance":
-                # Set sanctions_list_hit on the case dict before assess_risk_node
-                # (next in the graph) scores it via score_insurance_case().
-                case_dict = dict(state.get("extracted_transaction", {}))
-                case_dict["sanctions_list_hit"] = True
-                partial["extracted_transaction"] = case_dict
+            notes.extend(f"SANCTIONS HIT: {name}" for name in hits)
+        for name, entity_status in incomplete:
+            if entity_status == "skipped":
+                notes.append(
+                    f"Verification sanctions NON EFFECTUEE pour {name} "
+                    "(cle API OpenSanctions absente) -- verification manuelle obligatoire"
+                )
+            else:  # "failed"
+                notes.append(
+                    f"Verification sanctions EN ECHEC pour {name} "
+                    "(timeout ou erreur du service OpenSanctions) -- verification manuelle obligatoire"
+                )
+        if notes:
+            partial["analyst_notes"] = notes
+
+        if hits and sector == "assurance":
+            # Set sanctions_list_hit on the case dict before assess_risk_node
+            # (next in the graph) scores it via score_insurance_case().
+            case_dict = dict(state.get("extracted_transaction", {}))
+            case_dict["sanctions_list_hit"] = True
+            partial["extracted_transaction"] = case_dict
         return partial
 
     except Exception as exc:
@@ -283,7 +349,7 @@ async def screen_sanctions_node(state: STRState) -> dict:
 # ---------------------------------------------------------------------------
 
 def assess_risk_node(state: STRState) -> dict:
-    """Apply rule-based risk scoring to produce risk indicators and confidence."""
+    """Apply rule-based risk scoring to produce risk indicators and risk_score."""
     request = state["request"]
     case_id = request.get("case_id", "unknown")
     sector = request.get("sector", "banque")
@@ -296,12 +362,12 @@ def assess_risk_node(state: STRState) -> dict:
         log.info(
             "node_complete",
             risk_level=risk_level,
-            confidence=severity,
+            risk_score=severity,
             indicator_count=len(matched_labels),
         )
         return {
             "risk_indicators": matched_labels,
-            "confidence": severity,
+            "risk_score": severity,
             "risk_level": risk_level,
         }
 
@@ -311,11 +377,12 @@ def assess_risk_node(state: STRState) -> dict:
     matched_labels: list[str] = []
     total_weight: float = 0.0
 
-    # R001 -- high-risk jurisdiction
+    # R001 -- high-risk jurisdiction (weight depends on FATF tier)
     receiver_country = (tx.get("receiver") or {}).get("country", "")
-    if receiver_country in HIGH_RISK_COUNTRIES:
+    tier_weight = FATF_COUNTRY_WEIGHTS.get(receiver_country)
+    if tier_weight is not None:
         matched_labels.append(RISK_RULES[0]["label"])
-        total_weight += RISK_RULES[0]["weight"]
+        total_weight += tier_weight
 
     # R002 -- large amount
     amount = tx.get("amount", 0) or 0
@@ -371,13 +438,13 @@ def assess_risk_node(state: STRState) -> dict:
         matched_labels.append(RISK_RULES[10]["label"])
         total_weight += RISK_RULES[10]["weight"]
 
-    confidence = min(total_weight, 1.0)
+    risk_score = min(total_weight, 1.0)
 
-    if confidence >= 0.6:
+    if risk_score >= 0.6:
         risk_level = RiskLevel.CRITICAL.value
-    elif confidence >= 0.4:
+    elif risk_score >= 0.4:
         risk_level = RiskLevel.HIGH.value
-    elif confidence >= 0.2:
+    elif risk_score >= 0.2:
         risk_level = RiskLevel.MEDIUM.value
     else:
         risk_level = RiskLevel.LOW.value
@@ -385,12 +452,12 @@ def assess_risk_node(state: STRState) -> dict:
     log.info(
         "node_complete",
         risk_level=risk_level,
-        confidence=confidence,
+        risk_score=risk_score,
         indicator_count=len(matched_labels),
     )
     return {
         "risk_indicators": matched_labels,
-        "confidence": confidence,
+        "risk_score": risk_score,
         "risk_level": risk_level,
     }
 
@@ -576,7 +643,7 @@ async def run_str_graph(request_dict: dict) -> STRState:
         "sanctions_results": {},
         "risk_indicators": [],
         "risk_level": RiskLevel.LOW.value,
-        "confidence": 0.0,
+        "risk_score": 0.0,
         "narrative_fr": "",
         "goaml_xml": "",
         "analyst_notes": [],

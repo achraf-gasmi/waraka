@@ -106,7 +106,7 @@ class TestInsuranceExtractionPipeline:
             final_state = await run_str_graph(_make_insurance_request())
 
         assert final_state["risk_level"] == "critical"
-        assert final_state["confidence"] >= 0.6
+        assert final_state["risk_score"] >= 0.6
 
     async def test_insurance_scenario_extracts_parties(self):
         with (
@@ -143,4 +143,4 @@ class TestInsuranceExtractionPipeline:
 
         assert final_state["extracted_transaction"]["sanctions_list_hit"] is True
         assert final_state["risk_level"] == "critical"
-        assert final_state["confidence"] == 1.0
+        assert final_state["risk_score"] == 1.0

@@ -135,13 +135,15 @@ def test_apply_sanctions_to_entities():
         Entity(name="Carthage SARL", entity_type="company"),
     ]
     sanctions = {
-        "Gulf Properties FZE": {"hit": True, "detail": "OFAC SDN match"},
-        "Carthage SARL": {"hit": False, "detail": None},
+        "Gulf Properties FZE": {"hit": True, "detail": "OFAC SDN match", "status": "screened"},
+        "Carthage SARL": {"hit": False, "detail": None, "status": "skipped"},
     }
     updated = apply_sanctions_to_entities(entities, sanctions)
     assert updated[0].sanctions_hit is True
     assert updated[0].sanctions_detail == "OFAC SDN match"
+    assert updated[0].sanctions_status == "screened"
     assert updated[1].sanctions_hit is False
+    assert updated[1].sanctions_status == "skipped"
 
 
 def test_normalize_country_known_names():
