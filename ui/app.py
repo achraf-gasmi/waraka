@@ -152,7 +152,7 @@ if "result" in st.session_state:
     sanctions_status = result.get("sanctions_status", "all_screened")
     if sanctions_status != "all_screened":
         st.error(
-            "🛑 **VERIFICATION SANCTIONS INCOMPLETE — verification manuelle requise.**\n\n"
+            "🛑 **VÉRIFICATION SANCTIONS INCOMPLETE — vérification manuelle requise.**\n\n"
             f"Statut du filtrage sanctions : `{sanctions_status}`. Une ou plusieurs entites "
             "n'ont PAS ete verifiees automatiquement contre les listes de sanctions "
             "(cle API OpenSanctions absente, ou timeout/erreur du service). "
