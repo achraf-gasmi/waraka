@@ -29,8 +29,6 @@ Takes plain French descriptions of suspicious transactions and produces goAML-co
 | API | FastAPI |
 | UI | Streamlit (French only) |
 | Database | PostgreSQL 16 |
-| Vector DB | ChromaDB |
-| Cache | Redis 7 |
 | Sanctions | OpenSanctions API |
 
 ---
@@ -86,7 +84,7 @@ waraka/
 docker compose up -d
 ```
 
-This starts PostgreSQL (port 5432), ChromaDB (port 8000), and Redis (port 6379).
+This starts PostgreSQL (port 5432).
 
 ### 3. Configure environment
 
@@ -298,8 +296,9 @@ before risk scoring runs.
 | Variable | Description | Default |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | Claude API key | required |
+| `LLM_PROVIDER` | LLM backend (`anthropic` or `gemini`) | `anthropic` |
+| `GEMINI_API_KEY` | Google Gemini API key (used when `LLM_PROVIDER=gemini`) | optional |
 | `WARAKA_API_KEY` | API bearer token | `waraka-dev-key-change-in-prod` |
 | `DATABASE_URL` | PostgreSQL connection | `postgresql+asyncpg://waraka:waraka@localhost:5432/waraka` |
 | `OPENSANCTIONS_API_KEY` | OpenSanctions API key | optional (screening skipped if absent) |
-| `LANGSMITH_API_KEY` | LangSmith tracing | optional |
 | `LOG_LEVEL` | Structlog level | `INFO` |
