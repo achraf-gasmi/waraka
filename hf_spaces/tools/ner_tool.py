@@ -36,6 +36,7 @@ def parse_entity(raw: dict) -> Entity:
         is_pep=bool(raw.get("is_pep", False)),
         sanctions_hit=False,
         sanctions_detail=None,
+        sanctions_status=None,
     )
 
 
@@ -175,7 +176,8 @@ def apply_sanctions_to_entities(
         sanctions_results: Dict from screen_entities() keyed by entity name.
 
     Returns:
-        Updated list of Entity models with sanctions_hit and sanctions_detail set.
+        Updated list of Entity models with sanctions_hit, sanctions_detail,
+        and sanctions_status set.
     """
     updated: list[Entity] = []
     for entity in entities:
@@ -185,6 +187,7 @@ def apply_sanctions_to_entities(
                 update={
                     "sanctions_hit": result.get("hit", False),
                     "sanctions_detail": result.get("detail"),
+                    "sanctions_status": result.get("status"),
                 }
             )
         )

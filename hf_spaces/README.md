@@ -60,8 +60,10 @@ hf_spaces/
 └── models/schemas.py      # Modeles Pydantic -- identiques au backend
 ```
 
-Ces fichiers sont copiés depuis la racine du projet. Toute correction apportée au
-pipeline central (`agents/`, `graph/`, `tools/`, `models/`) doit être répliquée ici.
+Ces fichiers sont générés depuis la racine du projet par `scripts/sync_hf_spaces.sh`
+(ou `.ps1` sous Windows) -- ne les modifiez jamais directement ici. Toute correction
+doit être apportée au pipeline central (`agents/`, `graph/`, `tools/`, `models/`,
+`config/`) puis synchronisée en relançant ce script.
 
 ## Contexte réglementaire
 

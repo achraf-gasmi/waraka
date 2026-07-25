@@ -68,6 +68,14 @@ waraka/
 └── .env.example
 ```
 
+`hf_spaces/` is a self-contained Hugging Face Spaces deployment of the same
+STR pipeline (Streamlit + Gemini, no FastAPI/Postgres). Its `agents/`,
+`graph/`, `models/`, `tools/`, and `config/` are *generated* copies of the
+root packages, produced by `scripts/sync_hf_spaces.sh` (or `.ps1` on
+Windows) -- HF Spaces needs a flat, self-contained checkout, so it can't do
+an editable install or import across the repo boundary. Never edit those
+copies directly: edit the root package and re-run the sync script.
+
 ---
 
 ## Quick start
