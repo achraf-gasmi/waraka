@@ -23,6 +23,9 @@ httpx>=0.27.2
 # Logging
 structlog>=25.5.0
 
+# Config parsing
+PyYAML>=6.0.2
+
 # Environment
 python-dotenv>=1.1.1
 

@@ -129,7 +129,7 @@ class TestAssessRiskNode:
                 "currency": "TND",
                 "transaction_type": "virement",
                 "sender": {"name": "Carthage SARL", "entity_type": "company", "country": "TN", "is_pep": False},
-                "receiver": {"name": "Gulf Properties", "entity_type": "company", "country": "AE", "is_pep": False},
+                "receiver": {"name": "Gulf Properties", "entity_type": "company", "country": "IR", "is_pep": False},
                 "intermediaries": [
                     {"name": "Inter1", "entity_type": "company", "country": "MT"},
                     {"name": "Inter2", "entity_type": "company", "country": "LU"},
@@ -157,7 +157,7 @@ class TestAssessRiskNode:
         assert result["confidence"] >= 0.6
 
     def test_demo_scenario_has_4_indicators(self):
-        """R001 (AE), R002 (850k > 500k), R003 (2 intermediaries), R006 (no prior)."""
+        """R001 (IR, FATF blacklist tier, weight 0.40), R002 (850k > 500k), R003 (2 intermediaries), R006 (no prior)."""
         state = self._base_state()
         result = assess_risk_node(state)
         assert len(result["risk_indicators"]) >= 4

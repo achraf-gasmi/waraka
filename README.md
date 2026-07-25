@@ -172,7 +172,7 @@ Returns `{"status": "ok", "version": "1.0.0"}`.
 ```
 Notre client, la societe Immobiliere Carthage SARL (RC: B123456789, Tunis),
 a effectue le 15 mars 2026 un virement de 850 000 TND vers une societe
-denommee Gulf Properties FZE, domiciliee aux Emirats Arabes Unis (Abu Dhabi),
+denommee Persia Trading Co, domiciliee en Iran (Teheran),
 via deux intermediaires : Mediterranean Holdings Ltd (Malte) et
 Atlantic Capital SA (Luxembourg). Le client invoque un investissement
 immobilier mais n'a fourni aucun contrat ni justificatif economique.
@@ -184,14 +184,14 @@ Aucune relation commerciale anterieure n'existe avec les beneficiaires.
 | Field | Expected |
 |---|---|
 | Risk level | CRITIQUE |
-| Confidence | 0.85 -- 0.92 |
+| Confidence | 0.95 -- 1.00 |
 | Risk indicators | >= 4 |
 | Entities | 4 |
 | goAML XML | Valid STR-T structure |
 | Narrative | 300 -- 500 mots en francais formel |
 
 **Risk indicators detected:**
-1. Transaction vers une juridiction a haut risque (EAU -- GAFI)
+1. Transaction vers une juridiction a haut risque (Iran -- liste noire GAFI, poids 0.40)
 2. Recours a plusieurs intermediaires sans justification commerciale
 3. Absence de relation commerciale anterieure avec les beneficiaires
 4. Montant superieur a 500 000 TND sans justification economique apparente
@@ -202,12 +202,17 @@ Aucune relation commerciale anterieure n'existe avec les beneficiaires.
 
 | Rule | Condition | Weight |
 |---|---|---|
-| R001 | Destination country on FATF high-risk list | 0.30 |
+| R001 | Destination country on FATF high-risk list (tier-dependent) | 0.40 / 0.30 / 0.15 |
 | R002 | Amount > 500 000 TND | 0.20 |
 | R003 | >= 2 intermediaries | 0.25 |
 | R004 | Sanctions hit on any entity | 0.40 |
 | R005 | Sender or receiver is PEP | 0.30 |
 | R006 | No prior business relationship | 0.15 |
+
+R001's weight depends on which FATF tier the destination country falls under (0.40 for
+countermeasures-tier blacklist countries, 0.30 for enhanced-due-diligence-tier blacklist
+countries, 0.15 for greylist countries). The country lists and weights are sourced from
+`config/fatf_lists.yaml`, refreshed at each FATF plenary (February / June / October).
 
 Confidence = sum of matched weights (capped at 1.0).
 CRITICAL >= 0.6 | HIGH >= 0.4 | MEDIUM >= 0.2 | LOW < 0.2
