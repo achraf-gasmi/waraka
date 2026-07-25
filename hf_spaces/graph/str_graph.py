@@ -162,7 +162,7 @@ class STRState(TypedDict):
     sanctions_results: dict
     risk_indicators: list[str]
     risk_level: str
-    confidence: float
+    risk_score: float
     narrative_fr: str
     goaml_xml: str
     analyst_notes: Annotated[list[str], operator.add]
@@ -349,7 +349,7 @@ async def screen_sanctions_node(state: STRState) -> dict:
 # ---------------------------------------------------------------------------
 
 def assess_risk_node(state: STRState) -> dict:
-    """Apply rule-based risk scoring to produce risk indicators and confidence."""
+    """Apply rule-based risk scoring to produce risk indicators and risk_score."""
     request = state["request"]
     case_id = request.get("case_id", "unknown")
     sector = request.get("sector", "banque")
@@ -362,12 +362,12 @@ def assess_risk_node(state: STRState) -> dict:
         log.info(
             "node_complete",
             risk_level=risk_level,
-            confidence=severity,
+            risk_score=severity,
             indicator_count=len(matched_labels),
         )
         return {
             "risk_indicators": matched_labels,
-            "confidence": severity,
+            "risk_score": severity,
             "risk_level": risk_level,
         }
 
@@ -438,13 +438,13 @@ def assess_risk_node(state: STRState) -> dict:
         matched_labels.append(RISK_RULES[10]["label"])
         total_weight += RISK_RULES[10]["weight"]
 
-    confidence = min(total_weight, 1.0)
+    risk_score = min(total_weight, 1.0)
 
-    if confidence >= 0.6:
+    if risk_score >= 0.6:
         risk_level = RiskLevel.CRITICAL.value
-    elif confidence >= 0.4:
+    elif risk_score >= 0.4:
         risk_level = RiskLevel.HIGH.value
-    elif confidence >= 0.2:
+    elif risk_score >= 0.2:
         risk_level = RiskLevel.MEDIUM.value
     else:
         risk_level = RiskLevel.LOW.value
@@ -452,12 +452,12 @@ def assess_risk_node(state: STRState) -> dict:
     log.info(
         "node_complete",
         risk_level=risk_level,
-        confidence=confidence,
+        risk_score=risk_score,
         indicator_count=len(matched_labels),
     )
     return {
         "risk_indicators": matched_labels,
-        "confidence": confidence,
+        "risk_score": risk_score,
         "risk_level": risk_level,
     }
 
@@ -643,7 +643,7 @@ async def run_str_graph(request_dict: dict) -> STRState:
         "sanctions_results": {},
         "risk_indicators": [],
         "risk_level": RiskLevel.LOW.value,
-        "confidence": 0.0,
+        "risk_score": 0.0,
         "narrative_fr": "",
         "goaml_xml": "",
         "analyst_notes": [],

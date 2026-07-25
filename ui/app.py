@@ -170,7 +170,7 @@ if "result" in st.session_state:
         risk_raw = result.get("risk_level", "low")
         risk_label = RISK_LABELS.get(risk_raw, risk_raw.upper())
         risk_color = RISK_COLORS.get(risk_raw, "#757575")
-        confidence = result.get("confidence", 0.0)
+        risk_score = result.get("risk_score", 0.0)
 
         col1, col2 = st.columns(2)
         with col1:
@@ -181,7 +181,7 @@ if "result" in st.session_state:
                 unsafe_allow_html=True,
             )
         with col2:
-            st.metric("Score de confiance", f"{confidence:.0%}")
+            st.metric("Score de risque", f"{risk_score:.0%}")
 
         st.subheader("Entites detectees")
         entities = result.get("extracted_entities", [])

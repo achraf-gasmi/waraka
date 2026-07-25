@@ -63,7 +63,7 @@ class STRDraftRequest(BaseModel):
 class STRDraftResult(BaseModel):
     case_id: str
     status: str                         # "draft" | "needs_review" | "error"
-    confidence: float                   # 0.0 - 1.0
+    risk_score: float                   # 0.0 - 1.0
     extracted_entities: list[Entity]
     extracted_transaction: Optional[Transaction]
     risk_indicators: list[str]

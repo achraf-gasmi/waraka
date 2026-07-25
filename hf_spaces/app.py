@@ -82,7 +82,7 @@ def run_analysis(
     return {
         "case_id": full_case_ref,
         "status": "draft",
-        "confidence": final_state.get("confidence", 0.0),
+        "risk_score": final_state.get("risk_score", 0.0),
         "risk_level": final_state.get("risk_level", "low"),
         "extracted_entities": final_state.get("extracted_entities", []),
         "risk_indicators": final_state.get("risk_indicators", []),
@@ -303,7 +303,7 @@ if "result" in st.session_state:
     # ------------------------------------------------------------------
     with tab_resume:
         risk_level = result.get("risk_level", "low")
-        confidence = result.get("confidence", 0.0)
+        risk_score = result.get("risk_score", 0.0)
         latency = result.get("latency_ms", 0)
 
         # Top metrics row
@@ -312,7 +312,7 @@ if "result" in st.session_state:
             st.markdown("**Niveau de risque**")
             st.markdown(_risk_badge(risk_level), unsafe_allow_html=True)
         with c2:
-            st.metric("Score de confiance", f"{confidence:.0%}")
+            st.metric("Score de risque", f"{risk_score:.0%}")
         with c3:
             st.metric("Entités détectées", len(result.get("extracted_entities", [])))
         with c4:

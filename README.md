@@ -184,7 +184,7 @@ Aucune relation commerciale anterieure n'existe avec les beneficiaires.
 | Field | Expected |
 |---|---|
 | Risk level | CRITIQUE |
-| Confidence | 0.95 -- 1.00 |
+| Risk score | 0.95 -- 1.00 |
 | Risk indicators | >= 4 |
 | Entities | 4 |
 | goAML XML | Valid STR-T structure |
@@ -214,7 +214,7 @@ countermeasures-tier blacklist countries, 0.30 for enhanced-due-diligence-tier b
 countries, 0.15 for greylist countries). The country lists and weights are sourced from
 `config/fatf_lists.yaml`, refreshed at each FATF plenary (February / June / October).
 
-Confidence = sum of matched weights (capped at 1.0).
+Risk score = sum of matched weights (capped at 1.0).
 CRITICAL >= 0.6 | HIGH >= 0.4 | MEDIUM >= 0.2 | LOW < 0.2
 
 ---

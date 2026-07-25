@@ -142,7 +142,7 @@ class TestAssessRiskNode:
             "sanctions_results": {},
             "risk_indicators": [],
             "risk_level": "low",
-            "confidence": 0.0,
+            "risk_score": 0.0,
             "narrative_fr": "",
             "goaml_xml": "",
             "analyst_notes": [],
@@ -154,10 +154,10 @@ class TestAssessRiskNode:
         result = assess_risk_node(state)
         assert result["risk_level"] == RiskLevel.CRITICAL.value
 
-    def test_demo_scenario_confidence_above_threshold(self):
+    def test_demo_scenario_risk_score_above_threshold(self):
         state = self._base_state()
         result = assess_risk_node(state)
-        assert result["confidence"] >= 0.6
+        assert result["risk_score"] >= 0.6
 
     def test_demo_scenario_has_4_indicators(self):
         """R001 (IR, FATF blacklist tier, weight 0.40), R002 (850k > 500k), R003 (2 intermediaries), R006 (no prior)."""
@@ -165,11 +165,11 @@ class TestAssessRiskNode:
         result = assess_risk_node(state)
         assert len(result["risk_indicators"]) >= 4
 
-    def test_sanctions_hit_increases_confidence(self):
+    def test_sanctions_hit_increases_risk_score(self):
         state = self._base_state()
         state["sanctions_results"] = {"Gulf Properties": {"hit": True, "detail": "OFAC"}}
         result = assess_risk_node(state)
-        assert result["confidence"] >= 0.85
+        assert result["risk_score"] >= 0.85
 
     def test_low_amount_safe_jurisdiction_is_low_risk(self):
         state = self._base_state()
@@ -180,12 +180,12 @@ class TestAssessRiskNode:
         result = assess_risk_node(state)
         assert result["risk_level"] in (RiskLevel.LOW.value, RiskLevel.MEDIUM.value)
 
-    def test_confidence_capped_at_1(self):
+    def test_risk_score_capped_at_1(self):
         state = self._base_state()
         state["sanctions_results"] = {"x": {"hit": True, "detail": "test"}}
         state["extracted_transaction"]["sender"]["is_pep"] = True
         result = assess_risk_node(state)
-        assert result["confidence"] <= 1.0
+        assert result["risk_score"] <= 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +237,7 @@ class TestFullPipelineMocked:
             final_state = await run_str_graph(_make_request_dict())
 
         assert "SANCTIONS HIT: Gulf Properties FZE" in final_state.get("analyst_notes", [])
-        assert final_state["confidence"] >= 0.85
+        assert final_state["risk_score"] >= 0.85
 
     async def test_missing_api_key_produces_distinct_analyst_notes_and_incomplete_status(self):
         """When OPENSANCTIONS_API_KEY is missing, entities come back status='skipped'.
@@ -343,7 +343,7 @@ class TestLiveIntegration:
             final_state = await run_str_graph(_make_request_dict())
 
         assert final_state["risk_level"] == EXPECTED_RISK_LEVEL
-        assert final_state["confidence"] >= 0.6
+        assert final_state["risk_score"] >= 0.6
         assert len(final_state["risk_indicators"]) >= EXPECTED_RISK_INDICATORS_MIN
         assert len(final_state["extracted_entities"]) >= EXPECTED_ENTITY_COUNT
 

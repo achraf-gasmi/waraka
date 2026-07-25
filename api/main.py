@@ -131,16 +131,16 @@ async def draft_str(
         except Exception:
             pass
 
-    confidence = final_state.get("confidence", 0.0)
+    risk_score = final_state.get("risk_score", 0.0)
     risk_level_str = final_state.get("risk_level", RiskLevel.LOW.value)
 
     errors = final_state.get("errors", [])
-    status_str = "error" if errors else ("draft" if confidence >= 0.4 else "needs_review")
+    status_str = "error" if errors else ("draft" if risk_score >= 0.4 else "needs_review")
 
     result = STRDraftResult(
         case_id=case_id,
         status=status_str,
-        confidence=confidence,
+        risk_score=risk_score,
         extracted_entities=entities,
         extracted_transaction=transaction,
         risk_indicators=final_state.get("risk_indicators", []),
@@ -172,7 +172,7 @@ async def draft_str(
                 "institution": request.reporting_institution,
                 "input_text": request.analyst_input,
                 "status": status_str,
-                "confidence": confidence,
+                "confidence": risk_score,
                 "goaml_xml": result.goaml_xml,
                 "narrative_fr": result.narrative_fr,
                 "risk_level": risk_level_str,
