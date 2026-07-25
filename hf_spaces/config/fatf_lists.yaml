@@ -1,0 +1,44 @@
+last_updated: "2026-06-19"
+source_url_blacklist: "https://www.fatf-gafi.org/en/publications/High-risk-and-other-monitored-jurisdictions/call-for-action-june-2026.html"
+source_url_greylist: "https://www.fatf-gafi.org/en/publications/High-risk-and-other-monitored-jurisdictions/increased-monitoring-june-2026.html"
+
+blacklist:
+  countermeasures:
+    weight: 0.40
+    countries:
+      - KP  # Democratic People's Republic of Korea (North Korea)
+      - IR  # Iran
+  enhanced_due_diligence:
+    weight: 0.30
+    countries:
+      - MM  # Myanmar
+
+greylist:
+  weight: 0.15
+  countries:
+    - AO  # Angola
+    - BO  # Bolivia
+    - BA  # Bosnia and Herzegovina
+    - BG  # Bulgaria
+    - CM  # Cameroon
+    - CI  # Cote d'Ivoire
+    - CD  # Democratic Republic of the Congo
+    - HT  # Haiti
+    - IQ  # Iraq
+    - KE  # Kenya
+    - KW  # Kuwait
+    - LA  # Lao PDR
+    - LB  # Lebanon
+    - MC  # Monaco
+    - NP  # Nepal
+    - PG  # Papua New Guinea
+    - SS  # South Sudan
+    - SY  # Syria
+    - VE  # Venezuela
+    - VN  # Vietnam
+    - VG  # Virgin Islands (UK)
+    - YE  # Yemen
+
+removed_this_cycle:
+  - DZ  # Algeria
+  - NA  # Namibia
