@@ -1,5 +1,6 @@
 """FastAPI application -- Waraka STR Drafting API v1."""
 
+import hmac
 import os
 import uuid
 import time
@@ -31,7 +32,37 @@ app = FastAPI(
     version="1.0.0",
 )
 
-WARAKA_API_KEY: str = os.environ.get("WARAKA_API_KEY", "waraka-dev-key-change-in-prod")
+_DEFAULT_WARAKA_API_KEY: str = "waraka-dev-key-change-in-prod"
+
+ENVIRONMENT: str = os.environ.get("ENVIRONMENT", "")
+WARAKA_API_KEY: str = os.environ.get("WARAKA_API_KEY", _DEFAULT_WARAKA_API_KEY)
+
+
+# ---------------------------------------------------------------------------
+# Startup safety check
+# ---------------------------------------------------------------------------
+
+def _check_production_key_safety(environment: str, api_key: str) -> None:
+    """Refuse to run with the default API key unless explicitly in development.
+
+    ENVIRONMENT is treated as "not development" whenever it isn't literally
+    "development" -- including when it's unset. A deployment that forgot to
+    set ENVIRONMENT is much more likely to be a mis-configured production box
+    than an intentional local sandbox, so an unset value must fail closed
+    rather than silently allow the well-known default key to keep working.
+    """
+    if environment != "development" and api_key == _DEFAULT_WARAKA_API_KEY:
+        raise RuntimeError(
+            "WARAKA_API_KEY is still the default value "
+            f"'{_DEFAULT_WARAKA_API_KEY}' and ENVIRONMENT={environment!r} is not "
+            "'development'. Refusing to start. Set WARAKA_API_KEY to a real "
+            "secret, or set ENVIRONMENT=development for local use."
+        )
+
+
+@app.on_event("startup")
+async def _startup_security_check() -> None:
+    _check_production_key_safety(ENVIRONMENT, WARAKA_API_KEY)
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +94,7 @@ def verify_api_key(authorization: Optional[str] = Header(default=None)) -> None:
             detail="Authorization header missing or malformed",
         )
     token = authorization.removeprefix("Bearer ").strip()
-    if token != WARAKA_API_KEY:
+    if not hmac.compare_digest(token, WARAKA_API_KEY):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API key",
