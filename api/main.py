@@ -29,7 +29,7 @@ logger = structlog.get_logger()
 app = FastAPI(
     title="Waraka STR Drafting API",
     description="AI-powered Suspicious Transaction Report drafting for Tunisian banks",
-    version="1.0.0",
+    version="0.1.0-rc.1",
 )
 
 _DEFAULT_WARAKA_API_KEY: str = "waraka-dev-key-change-in-prod"
@@ -107,7 +107,7 @@ def verify_api_key(authorization: Optional[str] = Header(default=None)) -> None:
 
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "ok", "version": "1.0.0"}
+    return {"status": "ok", "version": "0.1.0-rc.1"}
 
 
 @app.post(

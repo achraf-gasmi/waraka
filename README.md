@@ -1,10 +1,20 @@
-# Waraka v1 -- STR Drafting Agent
+# Waraka -- STR Drafting Agent
 
 AI-powered Suspicious Transaction Report drafting assistant for Tunisian bank compliance officers.
 
 Takes plain French descriptions of suspicious transactions and produces goAML-compatible STR XML drafts, ready for human review and submission to CTAF.
 
-**Owner:** Achraf Gasmi | **Version:** 1.0.0 | **Date:** 2026-04-12
+**Owner:** Achraf Gasmi | **Status:** Prototype -- release candidate `v0.1.0-rc.1` | **Date:** 2026-08-04
+
+> **Prototype release candidate -- not production-ready.**
+> The goAML XML output has **not** been validated against the official CTAF/UNODC XSD schema.
+> Do not use this to file real STRs without full human review and independent schema validation.
+
+## Live demo
+
+A public demo runs on [Hugging Face Spaces](https://huggingface.co/spaces/achrafgasmi/waraka-str-demo).
+It runs on **Google Gemini**, not Anthropic Claude, and is a public demo environment --
+do not enter real customer or case data.
 
 ---
 
@@ -111,7 +121,7 @@ pip install -e ".[dev]"
 
 ```bash
 pytest tests/
-# 54 tests pass without API key (1 live test skipped)
+# 66 tests pass without API key (1 live test skipped)
 # Set ANTHROPIC_API_KEY to run live integration test
 ```
 
@@ -167,7 +177,7 @@ Record analyst approval or corrections.
 
 ### GET /health
 
-Returns `{"status": "ok", "version": "1.0.0"}`.
+Returns `{"status": "ok", "version": "0.1.0-rc.1"}`.
 
 ---
 
@@ -310,3 +320,9 @@ before risk scoring runs.
 | `DATABASE_URL` | PostgreSQL connection | `postgresql+asyncpg://waraka:waraka@localhost:5432/waraka` |
 | `OPENSANCTIONS_API_KEY` | OpenSanctions API key | optional (screening skipped if absent) |
 | `LOG_LEVEL` | Structlog level | `INFO` |
+
+---
+
+## License
+
+Apache License 2.0 -- see [LICENSE](LICENSE).
