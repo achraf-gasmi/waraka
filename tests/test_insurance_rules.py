@@ -2,7 +2,10 @@
 
 from graph.rules_insurance import (
     INSURANCE_RISK_RULES,
+    JURISDICTION_TIER_TRIGGERS,
+    LLM_EXTRACTED_TRIGGERS,
     RULES_BY_TRIGGER,
+    compute_jurisdiction_flags,
     score_insurance_case,
 )
 from models.schemas import Entity
@@ -14,8 +17,8 @@ from models.schemas_insurance import InsuranceCase
 # ---------------------------------------------------------------------------
 
 class TestRegistryIntegrity:
-    def test_has_29_rules(self):
-        assert len(INSURANCE_RISK_RULES) == 29
+    def test_has_31_rules(self):
+        assert len(INSURANCE_RISK_RULES) == 31
 
     def test_unique_ids(self):
         ids = [rule.id for rule in INSURANCE_RISK_RULES]
@@ -28,6 +31,29 @@ class TestRegistryIntegrity:
     def test_weights_in_valid_range(self):
         for rule in INSURANCE_RISK_RULES:
             assert 0 < rule.weight <= 1
+
+    def test_jurisdiction_rules_are_not_llm_extracted(self):
+        for trigger in JURISDICTION_TIER_TRIGGERS.values():
+            assert RULES_BY_TRIGGER[trigger].llm_extracted is False
+            assert trigger not in LLM_EXTRACTED_TRIGGERS
+
+    def test_jurisdiction_tiers_are_weighted_differently(self):
+        weights = {
+            trigger: RULES_BY_TRIGGER[trigger].weight
+            for trigger in JURISDICTION_TIER_TRIGGERS.values()
+        }
+        assert len(set(weights.values())) == 3
+        assert weights["jurisdiction_call_for_action"] > weights["jurisdiction_enhanced_dd"]
+        assert weights["jurisdiction_enhanced_dd"] > weights["jurisdiction_greylist"]
+
+    def test_jurisdiction_labels_are_distinct(self):
+        labels = {
+            RULES_BY_TRIGGER[trigger].label_fr
+            for trigger in JURISDICTION_TIER_TRIGGERS.values()
+        }
+        assert len(labels) == 3
+        greylist_label = RULES_BY_TRIGGER["jurisdiction_greylist"].label_fr
+        assert "n'exige pas" in greylist_label or "au cas par cas" in greylist_label
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +103,83 @@ class TestScoreInsuranceCase:
 
 
 # ---------------------------------------------------------------------------
+# compute_jurisdiction_flags() -- deterministic FATF lookup, no LLM judgment
+# ---------------------------------------------------------------------------
+
+def _case(souscripteur_country=None, **party_countries) -> dict:
+    """Build a minimal case dict with a souscripteur and optional other parties."""
+    case = {
+        "souscripteur": {"name": "Souscripteur", "country": souscripteur_country},
+        "assure": None,
+        "beneficiaires": [],
+        "payeur": None,
+        "intermediaire": None,
+    }
+    for key, country in party_countries.items():
+        if key == "beneficiaires":
+            case["beneficiaires"] = [{"name": "Beneficiaire", "country": country}]
+        else:
+            case[key] = {"name": key, "country": country}
+    return case
+
+
+class TestComputeJurisdictionFlags:
+    def test_countermeasures_country_sets_call_for_action(self):
+        flags = compute_jurisdiction_flags(_case(souscripteur_country="IR"))
+        assert flags["jurisdiction_call_for_action"] is True
+        assert flags["jurisdiction_enhanced_dd"] is False
+        assert flags["jurisdiction_greylist"] is False
+
+    def test_dprk_sets_call_for_action(self):
+        flags = compute_jurisdiction_flags(_case(souscripteur_country="KP"))
+        assert flags["jurisdiction_call_for_action"] is True
+
+    def test_myanmar_sets_enhanced_dd(self):
+        flags = compute_jurisdiction_flags(_case(souscripteur_country="MM"))
+        assert flags["jurisdiction_call_for_action"] is False
+        assert flags["jurisdiction_enhanced_dd"] is True
+        assert flags["jurisdiction_greylist"] is False
+
+    def test_greylist_country_sets_greylist_only(self):
+        flags = compute_jurisdiction_flags(_case(souscripteur_country="SY"))
+        assert flags["jurisdiction_call_for_action"] is False
+        assert flags["jurisdiction_enhanced_dd"] is False
+        assert flags["jurisdiction_greylist"] is True
+
+    def test_panama_is_not_on_any_fatf_list_and_does_not_trigger(self):
+        """Panama was delisted by FATF in October 2023 -- the real-world case
+        that exposed the LLM asserting FATF status from stale training data."""
+        flags = compute_jurisdiction_flags(_case(souscripteur_country="PA"))
+        assert flags["jurisdiction_call_for_action"] is False
+        assert flags["jurisdiction_enhanced_dd"] is False
+        assert flags["jurisdiction_greylist"] is False
+
+    def test_clean_country_does_not_trigger(self):
+        flags = compute_jurisdiction_flags(_case(souscripteur_country="TN"))
+        assert not any(flags.values())
+
+    def test_checks_all_parties_not_just_souscripteur(self):
+        case = _case(souscripteur_country="TN", payeur="IR")
+        flags = compute_jurisdiction_flags(case)
+        assert flags["jurisdiction_call_for_action"] is True
+
+    def test_checks_beneficiaires(self):
+        case = _case(souscripteur_country="TN", beneficiaires="MM")
+        flags = compute_jurisdiction_flags(case)
+        assert flags["jurisdiction_enhanced_dd"] is True
+
+    def test_no_country_does_not_trigger(self):
+        flags = compute_jurisdiction_flags(_case())
+        assert not any(flags.values())
+
+    def test_different_parties_in_different_tiers_both_flag(self):
+        case = _case(souscripteur_country="SY", payeur="IR")
+        flags = compute_jurisdiction_flags(case)
+        assert flags["jurisdiction_call_for_action"] is True
+        assert flags["jurisdiction_greylist"] is True
+
+
+# ---------------------------------------------------------------------------
 # InsuranceCase.risk_flags()
 # ---------------------------------------------------------------------------
 
@@ -89,11 +192,11 @@ class TestInsuranceCaseRiskFlags:
             **overrides,
         )
 
-    def test_risk_flags_returns_exactly_the_29_trigger_fields(self):
+    def test_risk_flags_returns_exactly_the_31_trigger_fields(self):
         case = self._make_case()
         flags = case.risk_flags()
         assert set(flags.keys()) == set(RULES_BY_TRIGGER.keys())
-        assert len(flags) == 29
+        assert len(flags) == 31
 
     def test_risk_flags_reflects_set_values(self):
         case = self._make_case(early_surrender=True, sanctions_list_hit=True)

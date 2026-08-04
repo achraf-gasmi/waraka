@@ -273,18 +273,24 @@ insurance typically surfaces across several linked operations over time:
 
 | Phase | Focus | Example indicators |
 |---|---|---|
-| KYC / onboarding | Client and beneficial-owner screening | Sanctions hit, PEP, shell company, high-risk jurisdiction |
+| KYC / onboarding | Client and beneficial-owner screening | Sanctions hit, PEP, shell company, high-risk jurisdiction (tier-dependent, FATF-list lookup) |
 | Souscription | Underwriting / policy purchase | Premium/income mismatch, product/profile mismatch, exit-focused behaviour |
 | Paiement de la prime | Premium payment | Cash above threshold, unrelated third-party payer, multi-currency cash |
 | Vie du contrat | Endorsements, advances, transfers | Frequent beneficiary changes, repeated policy advances, costly early transfer |
 | Rachat / indemnisation | Surrender / claims payout | Early surrender, surrender above threshold, claim paid to unrelated party |
 | Controle | Ongoing monitoring | Linked multiple contracts, same beneficial owner across contracts |
 
-This taxonomy (`graph/rules_insurance.py`, 29 indicators) is derived from
+This taxonomy (`graph/rules_insurance.py`, 31 indicators) is derived from
 public international typologies:
 
 - FATF, "Guidance for a Risk-Based Approach: Life Insurance Sector" (2018)
 - IAIS, Insurance Core Principle 22 (AML/CFT)
+
+The high-risk-jurisdiction indicator is split into three tier-dependent rules
+(FATF call-for-action / enhanced-due-diligence / greylist, weights 0.40 /
+0.30 / 0.15) and, like banking mode's R001, is computed deterministically
+from `config/fatf_lists.yaml` against each party's country -- never judged
+by the extraction LLM.
 
 Monetary thresholds (cash premium, surrender amount, high capital, etc.)
 are never hardcoded in the rules -- they live in a `JurisdictionConfig`

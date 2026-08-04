@@ -10,7 +10,7 @@ import structlog
 from typing import Optional
 
 from agents.str_agent import _ENTITY_SCHEMA
-from graph.rules_insurance import INSURANCE_RISK_RULES, RULES_BY_TRIGGER
+from graph.rules_insurance import LLM_EXTRACTED_TRIGGERS, RULES_BY_TRIGGER
 from models.schemas import Entity
 from models.schemas_insurance import (
     InsuranceCase,
@@ -25,13 +25,19 @@ logger = structlog.get_logger()
 
 # ---------------------------------------------------------------------------
 # Flag definitions -- generated from the rule registry so the prompt and the
-# scoring registry never drift apart
+# scoring registry never drift apart.
+#
+# Only llm_extracted=True rules are surfaced here. The jurisdiction_* flags
+# (rule.llm_extracted=False) are deliberately excluded: FATF status is a
+# fact to look up, not something to ask an LLM to judge from its training
+# data (see rules_insurance.compute_jurisdiction_flags).
 # ---------------------------------------------------------------------------
 
 
 def _build_flag_definitions() -> str:
     return "\n".join(
-        f"- {rule.trigger_field} : {rule.label_fr}" for rule in INSURANCE_RISK_RULES
+        f"- {rule.trigger_field} : {rule.label_fr}"
+        for rule in LLM_EXTRACTED_TRIGGERS.values()
     )
 
 
@@ -39,7 +45,7 @@ _FLAG_DEFINITIONS: str = _build_flag_definitions()
 
 
 def _build_json_fallback_contract() -> str:
-    flag_lines = ",\n".join(f'  "{trigger}": false' for trigger in RULES_BY_TRIGGER)
+    flag_lines = ",\n".join(f'  "{trigger}": false' for trigger in LLM_EXTRACTED_TRIGGERS)
     return f"""{{
   "operation_type": "souscription | paiement_prime | avenant | avance_sur_contrat | rachat_partiel | rachat_total | indemnisation | transfert",
   "operation_date": "YYYY-MM-DD or null",
@@ -188,7 +194,7 @@ INSURANCE_EXTRACTION_TOOL: dict = {
             },
             "description": {"type": ["string", "null"]},
             "red_flags": {"type": "array", "items": {"type": "string"}},
-            **{trigger: {"type": "boolean"} for trigger in RULES_BY_TRIGGER},
+            **{trigger: {"type": "boolean"} for trigger in LLM_EXTRACTED_TRIGGERS},
         },
         "required": ["operation_type", "souscripteur"],
     },

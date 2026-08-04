@@ -144,3 +144,80 @@ class TestInsuranceExtractionPipeline:
         assert final_state["extracted_transaction"]["sanctions_list_hit"] is True
         assert final_state["risk_level"] == "critical"
         assert final_state["risk_score"] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# FATF jurisdiction indicator -- deterministic, not LLM-judged
+# ---------------------------------------------------------------------------
+
+def _make_extraction_data(souscripteur_country: str) -> dict:
+    data = dict(MOCK_INSURANCE_EXTRACTION_DATA)
+    data["souscripteur"] = {
+        "name": "Client Test",
+        "entity_type": "person",
+        "country": souscripteur_country,
+        "is_pep": False,
+    }
+    return data
+
+
+class TestInsuranceJurisdictionIndicator:
+    async def test_panama_does_not_trigger_fatf_indicator(self):
+        """Panama was delisted by FATF in October 2023 -- this is the exact
+        real-world case that exposed the LLM asserting stale FATF status."""
+        with (
+            patch(
+                "graph.str_graph.call_llm_structured",
+                return_value=_make_extraction_data("PA"),
+            ),
+            patch("graph.str_graph.call_llm", return_value=MOCK_NARRATIVE),
+            patch(
+                "graph.str_graph.screen_entities_async",
+                new=AsyncMock(return_value={}),
+            ),
+        ):
+            final_state = await run_str_graph(_make_insurance_request())
+
+        case = final_state["extracted_transaction"]
+        assert case["jurisdiction_call_for_action"] is False
+        assert case["jurisdiction_enhanced_dd"] is False
+        assert case["jurisdiction_greylist"] is False
+
+        from graph.rules_insurance import JURISDICTION_TIER_TRIGGERS, RULES_BY_TRIGGER
+
+        jurisdiction_labels = {
+            RULES_BY_TRIGGER[trigger].label_fr
+            for trigger in JURISDICTION_TIER_TRIGGERS.values()
+        }
+        assert not jurisdiction_labels & set(final_state["risk_indicators"])
+
+    async def test_iran_triggers_call_for_action_tier(self):
+        with (
+            patch(
+                "graph.str_graph.call_llm_structured",
+                return_value=_make_extraction_data("IR"),
+            ),
+            patch("graph.str_graph.call_llm", return_value=MOCK_NARRATIVE),
+            patch(
+                "graph.str_graph.screen_entities_async",
+                new=AsyncMock(return_value={}),
+            ),
+        ):
+            final_state = await run_str_graph(_make_insurance_request())
+
+        case = final_state["extracted_transaction"]
+        assert case["jurisdiction_call_for_action"] is True
+        assert case["jurisdiction_enhanced_dd"] is False
+        assert case["jurisdiction_greylist"] is False
+
+    async def test_llm_is_never_asked_to_judge_jurisdiction(self):
+        """The extraction tool schema and prompt must not expose the
+        jurisdiction_* fields to the LLM -- they are computed, not extracted."""
+        from agents.insurance_prompts import INSURANCE_EXTRACTION_SYSTEM, INSURANCE_EXTRACTION_TOOL
+
+        properties = INSURANCE_EXTRACTION_TOOL["input_schema"]["properties"]
+        assert "jurisdiction_call_for_action" not in properties
+        assert "jurisdiction_enhanced_dd" not in properties
+        assert "jurisdiction_greylist" not in properties
+        assert "high_risk_jurisdiction" not in properties
+        assert "jurisdiction_call_for_action" not in INSURANCE_EXTRACTION_SYSTEM

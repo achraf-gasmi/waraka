@@ -57,7 +57,10 @@ class InsuranceCase(BaseModel):
     Boolean flags map 1:1 to trigger_field values in
     rules_insurance.INSURANCE_RISK_RULES. The extraction prompt must set
     each flag true only when the analyst's text establishes it
-    explicitly or implicitly.
+    explicitly or implicitly -- except the jurisdiction_* flags below,
+    which are never asked of the LLM (rule.llm_extracted=False) and are
+    instead computed deterministically by
+    rules_insurance.compute_jurisdiction_flags() from party countries.
     """
 
     case_id: str
@@ -89,7 +92,10 @@ class InsuranceCase(BaseModel):
     sanctions_list_hit: bool = False
     pep_involved: bool = False
     shell_company_involved: bool = False
-    high_risk_jurisdiction: bool = False
+    # Computed, not LLM-set -- see rules_insurance.compute_jurisdiction_flags()
+    jurisdiction_call_for_action: bool = False
+    jurisdiction_enhanced_dd: bool = False
+    jurisdiction_greylist: bool = False
     kyc_documentation_deficient: bool = False
     opaque_beneficial_ownership: bool = False
     frequent_address_changes: bool = False
