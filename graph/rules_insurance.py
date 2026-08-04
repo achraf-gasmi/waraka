@@ -93,12 +93,17 @@ class InsuranceRiskRule:
     trigger_field: str               # boolean on InsuranceCase set by extraction
     detected_by: tuple[Owner, ...] = field(default_factory=tuple)
     source: str = "FATF RBA Life Insurance 2018"
+    llm_extracted: bool = True       # False: computed deterministically, never
+                                      # asked of the extraction LLM (see
+                                      # compute_jurisdiction_flags below)
 
 
 # ---------------------------------------------------------------------------
-# Registry -- 29 indicators across the full policy lifecycle
+# Registry -- 31 indicators across the full policy lifecycle
 # Weight anchors: sanctions=1.0 > PEP/shell=0.75-0.8 > early surrender=0.7
-# > high-risk jurisdiction=0.7 > cash/unexplained funds=0.6 > behavioural=0.35-0.5
+# > jurisdiction (call-for-action)=0.40 > cash/unexplained funds=0.6
+# > jurisdiction (enhanced-DD)=0.30 > behavioural=0.35-0.5
+# > jurisdiction (greylist)=0.15
 # ---------------------------------------------------------------------------
 
 INSURANCE_RISK_RULES: list[InsuranceRiskRule] = [
@@ -128,13 +133,49 @@ INSURANCE_RISK_RULES: list[InsuranceRiskRule] = [
         trigger_field="shell_company_involved",
         detected_by=(Owner.FRONT_OFFICE, Owner.CONFORMITE),
     ),
+    # NOTE: the three jurisdiction rules below are computed deterministically
+    # by compute_jurisdiction_flags() from each party's country against
+    # tools.fatf_lookup.FATF_COUNTRY_TIERS -- the same FATF list config
+    # banking mode's R001 uses. They are marked llm_extracted=False so the
+    # extraction LLM is never asked to judge FATF status from its own
+    # training data (it previously flagged Panama, which FATF delisted in
+    # October 2023).
     InsuranceRiskRule(
-        id="I004", name="Juridiction a haut risque", weight=0.70,
-        label_fr="Client lie a un pays ou territoire identifie par le GAFI comme "
-                 "presentant un risque eleve de blanchiment ou de financement du terrorisme",
+        id="I004", name="Juridiction sous appel a l'action du GAFI", weight=0.40,
+        label_fr="Client lie a un pays ou territoire figurant sur la liste du GAFI "
+                 "des juridictions a haut risque faisant l'objet d'un appel a "
+                 "l'action (contre-mesures renforcees requises en raison de "
+                 "deficiences strategiques graves et persistantes en matiere de LBC/FT)",
         phase=Phase.KYC_ONBOARDING, category=Category.CANAL_GEO,
-        trigger_field="high_risk_jurisdiction",
+        trigger_field="jurisdiction_call_for_action",
         detected_by=(Owner.FRONT_OFFICE, Owner.CONFORMITE),
+        source="FATF High-Risk Jurisdictions Subject to a Call for Action",
+        llm_extracted=False,
+    ),
+    InsuranceRiskRule(
+        id="I004b", name="Juridiction sous vigilance renforcee obligatoire", weight=0.30,
+        label_fr="Client lie a un pays ou territoire figurant sur la liste du GAFI "
+                 "des juridictions a haut risque soumises a une vigilance renforcee "
+                 "obligatoire, en raison de deficiences strategiques importantes en "
+                 "matiere de LBC/FT",
+        phase=Phase.KYC_ONBOARDING, category=Category.CANAL_GEO,
+        trigger_field="jurisdiction_enhanced_dd",
+        detected_by=(Owner.FRONT_OFFICE, Owner.CONFORMITE),
+        source="FATF High-Risk Jurisdictions Subject to a Call for Action",
+        llm_extracted=False,
+    ),
+    InsuranceRiskRule(
+        id="I004c", name="Juridiction sous surveillance renforcee (liste grise)", weight=0.15,
+        label_fr="Client lie a un pays ou territoire sous surveillance renforcee du "
+                 "GAFI (liste de suivi), engage aupres du GAFI dans un plan d'action "
+                 "pour remedier a des deficiences strategiques en matiere de LBC/FT "
+                 "-- le GAFI n'exige pas de vigilance renforcee systematique pour "
+                 "cette categorie ; une analyse au cas par cas reste necessaire",
+        phase=Phase.KYC_ONBOARDING, category=Category.CANAL_GEO,
+        trigger_field="jurisdiction_greylist",
+        detected_by=(Owner.FRONT_OFFICE, Owner.CONFORMITE),
+        source="FATF Jurisdictions Under Increased Monitoring",
+        llm_extracted=False,
     ),
     InsuranceRiskRule(
         id="I005", name="Documentation KYC insuffisante ou falsifiee", weight=0.50,
@@ -356,6 +397,55 @@ INSURANCE_RISK_RULES: list[InsuranceRiskRule] = [
 RULES_BY_TRIGGER: dict[str, InsuranceRiskRule] = {
     r.trigger_field: r for r in INSURANCE_RISK_RULES
 }
+
+LLM_EXTRACTED_TRIGGERS: dict[str, InsuranceRiskRule] = {
+    trigger: rule for trigger, rule in RULES_BY_TRIGGER.items() if rule.llm_extracted
+}
+
+# FATF tier name (tools.fatf_lookup.FATF_COUNTRY_TIERS) -> InsuranceCase trigger_field
+JURISDICTION_TIER_TRIGGERS: dict[str, str] = {
+    "countermeasures": "jurisdiction_call_for_action",
+    "enhanced_due_diligence": "jurisdiction_enhanced_dd",
+    "greylist": "jurisdiction_greylist",
+}
+
+
+def compute_jurisdiction_flags(case: dict) -> dict[str, bool]:
+    """Deterministically flag FATF-listed jurisdictions among a case's parties.
+
+    Replaces LLM judgment of high-risk jurisdiction status: the extraction
+    model has no reliable, current source for FATF status and previously
+    flagged Panama, which FATF delisted in October 2023. Instead, look up
+    each party's country against tools.fatf_lookup.FATF_COUNTRY_TIERS -- the
+    same FATF list config banking mode's R001 uses -- and set the trigger
+    field for the highest-severity tier matched among all parties.
+
+    Args:
+        case: InsuranceCase dict (model_dump'd), with party sub-dicts each
+            carrying an optional "country" (ISO-2) field.
+
+    Returns:
+        dict of the three jurisdiction trigger_field names -> bool, suitable
+        for merging into the case dict before score_insurance_case().
+    """
+    from tools.fatf_lookup import FATF_COUNTRY_TIERS
+
+    parties: list[dict] = []
+    for key in ("souscripteur", "assure", "payeur", "intermediaire"):
+        party = case.get(key)
+        if party:
+            parties.append(party)
+    parties.extend(case.get("beneficiaires") or [])
+
+    countries = {p.get("country") for p in parties if p and p.get("country")}
+
+    flags = {trigger: False for trigger in JURISDICTION_TIER_TRIGGERS.values()}
+    for country in countries:
+        tier = FATF_COUNTRY_TIERS.get(country)
+        if tier:
+            flags[JURISDICTION_TIER_TRIGGERS[tier]] = True
+
+    return flags
 
 
 def score_insurance_case(flags: dict) -> tuple[list[str], float, str]:
